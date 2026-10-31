@@ -1,0 +1,93 @@
+[
+  {
+    "id": "sheet-pile",
+    "name": "Sheet Pile",
+    "version": "1.0.0",
+    "demo": false,
+    "items": [
+      {
+        "id": "setting-out-trench",
+        "description": "Setting out for trial trench",
+        "hint": "Record the setting-out observations and relevant drawing reference.",
+        "fields": [
+          { "key": "offset", "label": "Recorded offset", "unit": true }
+        ]
+      },
+      {
+        "id": "trial-pit",
+        "description": "Trial pit excavation and depth",
+        "hint": "Record the observed excavation and measured depth.",
+        "fields": [{ "key": "depth", "label": "Measured depth", "unit": true }]
+      },
+      {
+        "id": "setting-out-piles",
+        "description": "Setting out for sheet piles",
+        "hint": "Record the position and alignment observations.",
+        "fields": []
+      },
+      {
+        "id": "pile-type",
+        "description": "Type and length of sheet piles",
+        "hint": "Record the installed section and pile length.",
+        "fields": [
+          { "key": "section", "label": "Pile section / type" },
+          { "key": "length", "label": "Recorded length", "unit": true }
+        ]
+      },
+      {
+        "id": "welding-test",
+        "description": "Welding test of sheet piles",
+        "hint": "Record the test method and test record reference. No test criteria are inferred.",
+        "fields": [
+          { "key": "method", "label": "Test method" },
+          { "key": "testReference", "label": "Test record reference" }
+        ]
+      },
+      {
+        "id": "toe-level",
+        "description": "Sheet pile toe level",
+        "hint": "Record specified and measured levels against the project datum. Status is selected by the inspector.",
+        "fields": [
+          { "key": "specifiedLevel", "label": "Specified toe level" },
+          { "key": "measuredLevel", "label": "Measured toe level" },
+          { "key": "datum", "label": "Datum" },
+          { "key": "units", "label": "Units" }
+        ]
+      },
+      {
+        "id": "corner-welding",
+        "description": "Corner sheet pile welding details",
+        "hint": "Record the observed corner connection and welding details.",
+        "fields": []
+      }
+    ]
+  },
+  {
+    "id": "bored-pile",
+    "name": "Bored Pile",
+    "version": "demo-1.0.0",
+    "demo": true,
+    "items": [
+      {
+        "id": "demo-observation",
+        "description": "Bored pile site observation",
+        "hint": "Demonstration placeholder only. Configure an approved project checklist before engineering use.",
+        "fields": [{ "key": "observation", "label": "Recorded observation" }]
+      }
+    ]
+  },
+  {
+    "id": "pipe-pile",
+    "name": "Pipe Pile",
+    "version": "demo-1.0.0",
+    "demo": true,
+    "items": [
+      {
+        "id": "demo-observation",
+        "description": "Pipe pile site observation",
+        "hint": "Demonstration placeholder only. Configure an approved project checklist before engineering use.",
+        "fields": [{ "key": "observation", "label": "Recorded observation" }]
+      }
+    ]
+  }
+]
