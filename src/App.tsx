@@ -488,7 +488,7 @@ export default function App() {
           aria-label="Main navigation"
           className={isEditor ? "workspace-navigation" : ""}
         >
-          {(isEditor ? nav.slice(0, 2) : nav).map(({ id, label, Icon }) => (
+          {nav.map(({ id, label, Icon }) => (
             <button
               key={id}
               className={
