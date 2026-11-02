@@ -15,6 +15,7 @@ import {
   Images,
   LayoutDashboard,
   Loader2,
+  MapPin,
   Moon,
   Menu,
   FileText,
@@ -52,6 +53,8 @@ import { Records } from "./components/Records";
 import { Checklist } from "./components/Checklist";
 import { InspectionForm } from "./components/InspectionForm";
 import { PhotoManager } from "./components/PhotoManager";
+import { Plans } from "./components/Plans";
+import { loadDrawingOriginals, loadReportPlans } from "./plan-render";
 import { ArchiveWorkspace } from "./components/ArchiveWorkspace";
 import { exportBackupFiles, type BackupOutcome } from "./backup-export";
 import { EMPTY_SCAN, scanStoredData } from "./integrity";
@@ -83,6 +86,7 @@ type Page =
   | "records"
   | "checklist"
   | "photos"
+  | "plans"
   | "report"
   | "settings"
   | "photo-library"
@@ -323,7 +327,7 @@ export default function App() {
         if (failedSave.current || failedPhotos.current.length)
           throw Object.assign(
             new Error(
-              "Retry saving the inspection before changing photographs.",
+              "Retry saving the inspection before making further changes.",
             ),
             { retryablePhotoWrite: true },
           );
@@ -353,7 +357,10 @@ export default function App() {
   const navigate = async (next: Page) => {
     if (!(await flush())) return;
     if (
-      (next === "checklist" || next === "photos" || next === "report") &&
+      (next === "checklist" ||
+        next === "photos" ||
+        next === "plans" ||
+        next === "report") &&
       !activeRef.current
     ) {
       const first = records[0];
@@ -384,6 +391,8 @@ export default function App() {
           effective,
           photos.map(fromStoredPhoto),
           await loadFont(),
+          await loadReportPlans(effective.id),
+          await loadDrawingOriginals(effective.id),
         ),
         packageName(effective) + ".zip",
       );
@@ -417,7 +426,12 @@ export default function App() {
         : activeRef.current!;
       const photos = await listPhotoViews(record.id);
       download(
-        await generatePDF(record, photos, await loadFont()),
+        await generatePDF(
+          record,
+          photos,
+          await loadFont(),
+          await loadReportPlans(record.id),
+        ),
         packageName(record) + ".pdf",
       );
     }, "PDF generated and download requested.");
@@ -458,7 +472,10 @@ export default function App() {
     { id: "exports" as Page, label: "Exports", Icon: Archive },
   ];
   const isEditor =
-    page === "checklist" || page === "photos" || page === "report";
+    page === "checklist" ||
+    page === "photos" ||
+    page === "plans" ||
+    page === "report";
   const jumpTo = async (id: string) => {
     setMenuOpen(false);
     if (!(await flush())) return;
@@ -518,6 +535,13 @@ export default function App() {
             >
               <ClipboardCheck size={19} />
               Checklist ({progress(active).done}/{progress(active).total})
+            </button>
+            <button
+              className={page === "plans" ? "active" : ""}
+              onClick={() => void navigate("plans")}
+            >
+              <MapPin size={19} />
+              Plans
             </button>
             <button
               className={page === "photos" ? "active" : ""}
@@ -860,6 +884,7 @@ export default function App() {
                   <div className="editor-tabs">
                     {[
                       { id: "checklist", label: "Checklist" },
+                      { id: "plans", label: "Plans" },
                       {
                         id: "photos",
                         label: `Photos (${selectedPhotos.length})`,
@@ -982,6 +1007,15 @@ export default function App() {
                       revision: active.revision + 1,
                     })
                   }
+                />
+              )}
+              {page === "plans" && active && (
+                <Plans
+                  key={active.id}
+                  record={active}
+                  photos={selectedPhotos}
+                  run={runPhoto}
+                  onOpenItem={(id) => void jumpTo(`item-${id}`)}
                 />
               )}
               {page === "photos" && active && (
@@ -1141,6 +1175,15 @@ export default function App() {
                 }}
               >
                 Checklist
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setMenuOpen(false);
+                  void navigate("plans");
+                }}
+              >
+                Plans
               </Button>
               <Button
                 variant="ghost"

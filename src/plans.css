@@ -1,0 +1,451 @@
+/* Plans: drawing viewer and checklist-linked marks. Navy controls; safety
+   orange stays reserved for photo and PDF actions. */
+.plans {
+  display: grid;
+  gap: 12px;
+}
+.plans-title {
+  align-items: flex-start;
+}
+.plans-empty {
+  padding: 32px 16px;
+}
+.plans-drawing-bar {
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.plans-drawing-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.plans-drawing-pick .field {
+  flex: 1 1 200px;
+  margin: 0;
+}
+.plans-meta summary {
+  min-height: 44px;
+  font-size: 14px;
+  list-style: revert;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--strong);
+}
+.plans-meta-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+.plans-meta-fields .field {
+  margin: 0;
+}
+.plans-workspace {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1100px) {
+  .plans-workspace {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    align-items: start;
+  }
+}
+.plans-stage {
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.plans-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+.plans-tools {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.plan-tool {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+}
+.plan-tool.active {
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-fg);
+}
+.plan-tool:disabled {
+  opacity: 0.45;
+}
+.plan-tool:focus-visible,
+.plans-viewer:focus-visible,
+.plan-marker:focus-visible,
+.legend-mark:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.plans-item-select {
+  flex: 1 1 220px;
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.plans-item-select select {
+  width: 100%;
+}
+.plans-viewer-wrap {
+  display: grid;
+  gap: 6px;
+}
+.plans-viewer {
+  position: relative;
+  overflow: hidden;
+  height: min(70vh, 720px);
+  min-height: 320px;
+  background: #e3e7eb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+.plans-viewer.mode-marker,
+.plans-viewer.mode-text,
+.plans-viewer.mode-rect,
+.plans-viewer.mode-circle,
+.plans-viewer.mode-arrow {
+  cursor: crosshair;
+}
+.plans-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  transform-origin: 0 0;
+  background: #fff;
+  box-shadow: 0 0 0 1px #aeb6bf;
+  pointer-events: none;
+}
+.plans-loading {
+  padding: 24px;
+  color: var(--muted);
+}
+.plans-shapes {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.plan-shape {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.plan-shape.draft {
+  pointer-events: none;
+}
+.plan-shape rect,
+.plan-shape ellipse,
+.plan-shape line,
+.plan-shape polyline {
+  fill: none;
+}
+.plan-shape .halo * {
+  stroke: #fff;
+  stroke-width: 6;
+}
+.plan-shape .stroke * {
+  stroke: #17212b;
+  stroke-width: 2.5;
+}
+.plan-shape .hit * {
+  stroke: transparent;
+  stroke-width: 22;
+}
+.plan-shape.selected .stroke * {
+  stroke-dasharray: 6 3;
+  stroke-width: 3.5;
+}
+.plan-note-box {
+  fill: #fff;
+  stroke: #17212b;
+  stroke-width: 1.5;
+}
+.plan-shape.selected .plan-note-box {
+  stroke-width: 3;
+}
+.plan-note-text {
+  fill: #17212b;
+  font:
+    700 13px system-ui,
+    sans-serif;
+}
+/* Numbered markers: 44px touch target, 30px navy disc with white then dark ring
+   so the label stays readable on light and dark drawing content. */
+.plan-marker {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.plan-marker > span {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 5px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: #17212b;
+  color: #fff;
+  font:
+    800 13px/1 system-ui,
+    sans-serif;
+  border: 2.5px solid #fff;
+  box-shadow: 0 0 0 1.5px #17212b;
+}
+.plan-marker.selected > span {
+  border-width: 3px;
+  box-shadow:
+    0 0 0 2px #17212b,
+    0 0 0 5px #fff;
+}
+.plan-marker.unlinked > span {
+  background: #fff;
+  color: #17212b;
+  border-style: dashed;
+  border-color: #17212b;
+}
+.plan-marker.static {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0 8px 0 0;
+  display: inline-grid;
+  vertical-align: middle;
+  cursor: default;
+}
+.plans-viewbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.plans-hint {
+  font-size: 13px;
+  color: var(--muted);
+  flex: 1 1 200px;
+}
+.plans-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.plans-zoom .btn-icon {
+  width: 44px;
+  height: 44px;
+}
+.plans-zoom-level {
+  min-width: 52px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.plans-error {
+  color: #b42318;
+  font-weight: 700;
+}
+.plans-side {
+  display: none;
+  gap: 12px;
+}
+@media (min-width: 1100px) {
+  .plans-side {
+    display: grid;
+  }
+  .plans-legend-button {
+    display: none;
+  }
+}
+.plans-panel {
+  padding: 14px;
+}
+.plans-panel-title {
+  font-size: 16px;
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+}
+.plans-details {
+  display: grid;
+  gap: 10px;
+}
+.plans-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.plans-facts dt {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+.plans-facts dd {
+  margin: 0;
+}
+.plans-photo-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 0;
+}
+.plans-photo-strip figure {
+  margin: 0;
+  width: 72px;
+  flex: none;
+  font-size: 12px;
+  text-align: center;
+}
+.plans-photo-strip img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+.plans-photo-strip figure.at-mark img {
+  border: 2px solid #17212b;
+}
+.plans-legend {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.plans-legend th,
+.plans-legend td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 4px;
+  text-align: left;
+  vertical-align: top;
+}
+.plans-legend small {
+  display: block;
+  color: var(--muted);
+}
+.plans-legend tr.unlinked td {
+  font-style: italic;
+}
+.legend-mark {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 22px;
+  border: 2px solid #17212b;
+  background: #fff;
+  color: #17212b;
+  font-weight: 800;
+}
+/* Phone: the drawing gets the screen; details open as a bottom sheet. */
+@media (max-width: 760px) {
+  .plans {
+    gap: 8px;
+  }
+  .plans-title {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+  .plans-title .eyebrow,
+  .plans-intro {
+    display: none;
+  }
+  .plans-title h1 {
+    font-size: 22px;
+    margin: 0;
+  }
+  .plans-title .btn {
+    width: auto;
+    margin-left: auto;
+  }
+  .plans-drawing-bar {
+    padding: 8px;
+    gap: 4px;
+  }
+  .plans-drawing-pick .field > span {
+    font-size: 12px;
+  }
+  .plans-drawing-pick .field {
+    flex: 1 1 140px;
+  }
+  .plans-toolbar {
+    gap: 6px;
+  }
+  .plans-tools {
+    flex-wrap: nowrap;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .plan-tool-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .plans-item-select > span {
+    display: none;
+  }
+  .plans-viewer {
+    height: calc(100dvh - 300px);
+    min-height: 300px;
+  }
+  .plans-stage {
+    padding: 6px;
+  }
+  .plan-tool {
+    padding: 0 8px;
+  }
+  .plans-sheet {
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: 70dvh;
+    overflow-y: auto;
+    border-radius: 12px 12px 0 0 !important;
+  }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .plans-viewer {
+    height: calc(100dvh - 140px);
+    min-height: 220px;
+  }
+}

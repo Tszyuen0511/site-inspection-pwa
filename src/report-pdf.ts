@@ -8,16 +8,20 @@ import {
   type Inspection,
   type Photo,
   type PhotoMeta,
+  type ReportPlans,
 } from "./domain";
 import { orderedPhotos } from "./photos";
+import { legendRows, markLabels } from "./plan-labels";
 
 // A4 site inspection report: 1. Detail of Inspection, 2. Inspection Item,
-// 3. Site Photos (then core logs / progress plans when present). Daily-report
+// 3. Location Plan (when drawings exist), then Site Photos, core logs and
+// progress plans when present. Daily-report
 // data is kept in the record and exports but is not printed here.
 export async function renderInspectionReport(
   record: Inspection,
   photos: PhotoMeta[],
   fontBase64?: string,
+  plans?: ReportPlans,
 ): Promise<Blob> {
   const daily = dailyReportDefaults(record),
     doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -64,7 +68,7 @@ export async function renderInspectionReport(
     setFont(size, bold);
     return doc.splitTextToSize(value || "Not recorded", cellWidth) as string[];
   };
-  const brand = () => {
+  const brand = (x = left) => {
     doc.setFont(
       fontBase64 ? "Report" : "helvetica",
       fontBase64 ? "normal" : "bold",
@@ -74,17 +78,19 @@ export async function renderInspectionReport(
     doc.addImage(
       wspLogo,
       "PNG",
-      left,
+      x,
       7,
       18,
       18 / wspLogoRatio,
       "wsp-logo",
       "FAST",
     );
-    doc.text("SITE INSPECTION", left + 24, 13);
+    doc.text("SITE INSPECTION", x + 24, 13);
   };
   const newPage = (title = `Inspection No. ${number} - continued`) => {
-    doc.addPage();
+    // Explicitly portrait: jsPDF otherwise keeps the orientation of the last
+    // (possibly landscape plan) page for every later page.
+    doc.addPage("a4", "portrait");
     brand();
     y = 24;
     const lines = wrap(title, width, 9, true);
@@ -341,11 +347,20 @@ export async function renderInspectionReport(
   const sorted = orderedPhotos(photos),
     numbers = new Map(sorted.map((photo, index) => [photo.id, index]));
   const captionNotes: { label: string; caption: string }[] = [];
+  const labels = markLabels(
+    record.template.items,
+    plans?.annotations ?? [],
+    plans?.drawings ?? [],
+  );
   const itemLabel = (p: PhotoMeta) => {
     const index = record.template.items.findIndex((i) => i.id === p.itemId);
-    return index < 0
-      ? "Inspection Item: General observation"
-      : `Inspection Item: ${index + 1}. ${record.template.items[index].description}`;
+    const location = p.markId && labels.get(p.markId);
+    return (
+      (index < 0
+        ? "Inspection Item: General observation"
+        : `Inspection Item: ${index + 1}. ${record.template.items[index].description}`) +
+      (location ? ` | Plan location ${location.label}` : "")
+    );
   };
   // Everything printed in a cell is derived from that one photo object, so a
   // caption, item or remark can never come from a neighbouring photograph.
@@ -459,12 +474,207 @@ export async function renderInspectionReport(
       y += height;
     }
   };
+  // Location plans: one page per marked drawing page, oriented to suit the
+  // drawing, whole drawing shown (never cropped), marks drawn as vectors at their
+  // drawing-relative positions, and the checklist-aligned legend underneath or,
+  // when it would squeeze the drawing, on the following page(s).
+  const NAVY: [number, number, number] = [23, 33, 43];
+  async function planPages(plans: ReportPlans, section: number) {
+    const order = [...plans.drawings].sort(
+      (a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt),
+    );
+    for (const [n, pg] of plans.pages.entries()) {
+      const d = pg.drawing,
+        drawingNo = order.findIndex((x) => x.id === d.id) + 1;
+      doc.addPage("a4", pg.width > pg.height ? "landscape" : "portrait");
+      const W = doc.internal.pageSize.getWidth(),
+        H = doc.internal.pageSize.getHeight(),
+        L = W > H ? 14 : left,
+        R = W > H ? W - 14 : right;
+      brand(L);
+      let ty = 24;
+      const heading = `${section}.   Location Plan${n ? " (continued)" : ""}`;
+      text(heading, L, ty, 9.5, true);
+      ty += 4.6;
+      const info = `Drawing ${drawingNo}: ${d.title || "[Drawing title]"}  |  Drawing No. ${d.number || "[Drawing number]"}  |  Rev. ${d.revision || "[Rev.]"}  |  Source page ${pg.page} of ${d.pageCount}`;
+      for (const line of wrap(info, R - L, 8.5)) {
+        text(line, L, ty, 8.5);
+        ty += 3.8;
+      }
+      const rows = legendRows(record, plans.annotations, plans.drawings, {
+        drawingId: d.id,
+        page: pg.page,
+      });
+      const cols = [16, R - L - 16 - 28, 28];
+      const rowLines = rows.map((r) => wrap(r.item, cols[1] - 2, 7.5));
+      const legendH = rows.length
+        ? 9 + rowLines.reduce((h, l) => h + l.length * 3.3 + 1.6, 0)
+        : 0;
+      const top = ty + 1,
+        floor = H - 21,
+        full = floor - top;
+      const inline = rows.length > 0 && full - legendH >= full * 0.6;
+      const areaH = full - (inline ? legendH : 0);
+      const k = Math.min((R - L) / pg.width, areaH / pg.height);
+      const w = pg.width * k,
+        h = pg.height * k,
+        x0 = L + (R - L - w) / 2,
+        y0 = top;
+      doc.addImage(pg.jpeg, "JPEG", x0, y0, w, h, undefined, "FAST");
+      doc.setDrawColor(0);
+      doc.setLineWidth(0.25);
+      doc.rect(x0, y0, w, h);
+      const X = (v: number) => x0 + v * w,
+        Y = (v: number) => y0 + v * h;
+      const marks = plans.annotations.filter(
+        (a) => a.drawingId === d.id && a.page === pg.page,
+      );
+      const stroke = (draw: () => void) => {
+        doc.setDrawColor(255, 255, 255);
+        doc.setLineWidth(1.3);
+        draw();
+        doc.setDrawColor(...NAVY);
+        doc.setLineWidth(0.55);
+        draw();
+      };
+      for (const a of marks) {
+        const x1 = X(a.x),
+          y1 = Y(a.y),
+          x2 = X(a.x2 ?? a.x),
+          y2 = Y(a.y2 ?? a.y);
+        if (a.kind === "rect")
+          stroke(() =>
+            doc.rect(
+              Math.min(x1, x2),
+              Math.min(y1, y2),
+              Math.abs(x2 - x1),
+              Math.abs(y2 - y1),
+            ),
+          );
+        else if (a.kind === "circle")
+          stroke(() =>
+            doc.ellipse(
+              (x1 + x2) / 2,
+              (y1 + y2) / 2,
+              Math.abs(x2 - x1) / 2,
+              Math.abs(y2 - y1) / 2,
+              "S",
+            ),
+          );
+        else if (a.kind === "arrow") {
+          const ang = Math.atan2(y2 - y1, x2 - x1),
+            head = 3;
+          stroke(() => {
+            doc.line(x1, y1, x2, y2);
+            doc.line(
+              x2,
+              y2,
+              x2 - head * Math.cos(ang - 0.45),
+              y2 - head * Math.sin(ang - 0.45),
+            );
+            doc.line(
+              x2,
+              y2,
+              x2 - head * Math.cos(ang + 0.45),
+              y2 - head * Math.sin(ang + 0.45),
+            );
+          });
+        } else if (a.kind === "text" && a.text) {
+          setFont(7, true);
+          const tw = Math.min(doc.getTextWidth(a.text) + 3, w);
+          const bx = Math.min(x1, x0 + w - tw);
+          doc.setFillColor(255, 255, 255);
+          doc.setDrawColor(...NAVY);
+          doc.setLineWidth(0.35);
+          doc.rect(bx, y1 - 2.6, tw, 5.2, "FD");
+          doc.setTextColor(...NAVY);
+          doc.text(a.text, bx + 1.5, y1 + 1, { maxWidth: tw - 2 });
+        }
+      }
+      for (const a of marks.filter((m) => m.kind === "marker")) {
+        const l = labels.get(a.id);
+        const label = l?.label ?? "?";
+        setFont(7.5, true);
+        const pill = Math.max(5.8, doc.getTextWidth(label) + 2.6),
+          cx = X(a.x),
+          cy = Y(a.y);
+        // White halo then navy disc keeps the label readable on any drawing.
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(
+          cx - pill / 2 - 0.7,
+          cy - 3.6,
+          pill + 1.4,
+          7.2,
+          3.6,
+          3.6,
+          "F",
+        );
+        doc.setFillColor(
+          ...(l?.linked ? NAVY : ([255, 255, 255] as [number, number, number])),
+        );
+        doc.setDrawColor(...NAVY);
+        doc.setLineWidth(0.35);
+        doc.roundedRect(cx - pill / 2, cy - 2.9, pill, 5.8, 2.9, 2.9, "FD");
+        doc.setTextColor(
+          ...(l?.linked ? ([255, 255, 255] as [number, number, number]) : NAVY),
+        );
+        doc.text(label, cx, cy + 1, { align: "center" });
+      }
+      doc.setTextColor(0, 0, 0);
+      if (!rows.length) {
+        text("No marked locations on this page.", L, y0 + h + 4, 7.5);
+        continue;
+      }
+      const legendTitle = `Legend - Drawing ${drawingNo}, page ${pg.page}`;
+      if (inline) {
+        let ly = y0 + h + 4;
+        text(legendTitle, L, ly, 8, true);
+        ly += 1.5;
+        const cell = (x: number, cw: number, rh: number) => {
+          doc.setDrawColor(0);
+          doc.setLineWidth(0.15);
+          doc.rect(x, ly, cw, rh);
+        };
+        const xs = [L, L + cols[0], L + cols[0] + cols[1]];
+        ["Mark", "Checklist item", "Status"].forEach((t, i) => {
+          cell(xs[i], cols[i], 4.4);
+          text(t, xs[i] + 1.2, ly + 3.1, 7.5, true);
+        });
+        ly += 4.4;
+        rows.forEach((r, i) => {
+          const rh = rowLines[i].length * 3.3 + 1.6;
+          cols.forEach((cw, c) => cell(xs[c], cw, rh));
+          text(r.label, xs[0] + 1.2, ly + 3, 7.5, true);
+          rowLines[i].forEach((line, j) =>
+            text(line, xs[1] + 1.2, ly + 3 + j * 3.3, 7.5),
+          );
+          text(r.status, xs[2] + 1.2, ly + 3, 7.5, r.status === "Fail");
+          ly += rh;
+        });
+      } else {
+        text("Legend continues on the next page.", L, y0 + h + 4, 7.5, true);
+        newPage(`${section}.   ${legendTitle}`);
+        table(
+          ["Mark", "Checklist item", "Status"],
+          rows.map((r) => [r.label, r.item, r.status]),
+          [18, 118, 30],
+          8,
+          (row, column) => column === 2 && row[2] === "Fail",
+        );
+      }
+    }
+  }
+  let section = 3;
+  if (plans?.pages.length) {
+    await planPages(plans, section);
+    section++;
+  }
   await photoGrid(
     sorted.filter((p) => !p.reportSection || p.reportSection === "site"),
-    3,
+    section,
     "Site Photos",
   );
-  let nextSection = 4;
+  let nextSection = section + 1;
   const cores = sorted.filter((p) => p.reportSection === "core");
   if (cores.length) {
     const groups = new Map<string, PhotoMeta[]>();
@@ -476,9 +686,9 @@ export async function renderInspectionReport(
       await photoGrid(list, nextSection, `Core Sample Log - ${group}`);
     nextSection++;
   }
-  const plans = sorted.filter((p) => p.reportSection === "plan");
-  if (plans.length) {
-    for (const p of plans) {
+  const progressPlans = sorted.filter((p) => p.reportSection === "plan");
+  if (progressPlans.length) {
+    for (const p of progressPlans) {
       newPage(
         `${nextSection}.   Site Progress Plan (updated to ${reportDate(record.date)})`,
       );
@@ -525,9 +735,15 @@ export async function renderInspectionReport(
 
   for (let page = 1; page <= doc.getNumberOfPages(); page++) {
     doc.setPage(page);
+    // Footer positions follow each page's own size (plan pages may be landscape).
+    const W = doc.internal.pageSize.getWidth(),
+      H = doc.internal.pageSize.getHeight(),
+      fl = W > H ? 14 : left,
+      fr = W > H ? W - 14 : right,
+      fy = H - 297;
     doc.setDrawColor(0);
     doc.setLineWidth(0.18);
-    doc.line(left, 279, right - 7, 279);
+    doc.line(fl, 279 + fy, fr - 7, 279 + fy);
     const prepared = wrap(
       `Prepared by: ${daily.preparedBy || record.inspector} (${record.role})`,
       width - 16,
@@ -535,27 +751,27 @@ export async function renderInspectionReport(
     );
     prepared
       .slice(0, 2)
-      .forEach((line, i) => text(line, left, 282 + i * 2.8, 7));
-    text(String(page), right, 282, 8, false, "right");
+      .forEach((line, i) => text(line, fl, 282 + fy + i * 2.8, 7));
+    text(String(page), fr, 282 + fy, 8, false, "right");
     if (page === 1 && record.weatherSnapshot && !observed) {
       setFont(6.2);
-      doc.textWithLink("Forecast summary: MET Norway", left, 286, {
+      doc.textWithLink("Forecast summary: MET Norway", fl, 286 + fy, {
         url: "https://www.met.no/",
       });
-      doc.textWithLink("CC BY 4.0", left + 36, 286, {
+      doc.textWithLink("CC BY 4.0", fl + 36, 286 + fy, {
         url: "https://creativecommons.org/licenses/by/4.0/",
       });
     }
     text(
       `${number} | Rev. ${record.revision} | ${record.status}`,
-      left,
-      289,
+      fl,
+      289 + fy,
       6.2,
     );
     text(
       `Generated ${generated} | Page ${page} of ${doc.getNumberOfPages()}`,
-      left,
-      292,
+      fl,
+      292 + fy,
       6.2,
     );
   }

@@ -6,10 +6,13 @@ import {
   packageName,
   photoNumber,
   safeName,
+  type Drawing,
   type Inspection,
   type Photo,
   type PhotoMeta,
+  type ReportPlans,
 } from "./domain";
+import { markLabels } from "./plan-labels";
 export function verifyPhotos(
   record: Inspection,
   photos: PhotoMeta[],
@@ -39,6 +42,7 @@ export function photoMetadata(photos: Photo[]) {
     itemId: p.itemId,
     caption: p.caption,
     remark: p.remark || "",
+    markId: p.markId || "",
     order: i,
     number: photoNumber(i),
     name: p.name,
@@ -55,6 +59,7 @@ export async function generatePDF(
   record: Inspection,
   photos: PhotoMeta[],
   fontBase64?: string,
+  plans?: ReportPlans,
 ): Promise<Blob> {
   verifyPhotos(record, photos);
   const content =
@@ -67,20 +72,27 @@ export async function generatePDF(
         p.reportGroup,
         p.reportSection,
       ]),
-    );
+    ) +
+    JSON.stringify([
+      // Only what the report prints; the original file name is not printed.
+      plans?.drawings.map((d) => [d.title, d.number, d.revision]),
+      plans?.annotations.map((a) => a.text),
+    ]);
   if (!fontBase64 && /[^\u0000-\u00ff]/.test(content))
     throw new Error(
       "This report contains characters outside the default Latin font. Add a compatible Unicode .ttf report font in Settings, then retry. JSON and backups preserve all text.",
     );
-  return renderInspectionReport(record, photos, fontBase64);
+  return renderInspectionReport(record, photos, fontBase64, plans);
 }
 export async function generatePackage(
   record: Inspection,
   photos: Photo[],
   font?: string,
+  plans?: ReportPlans,
+  originals: { drawing: Drawing; bytes: ArrayBuffer }[] = [],
 ) {
   verifyPhotos(record, photos, true);
-  const pdf = await generatePDF(record, photos, font);
+  const pdf = await generatePDF(record, photos, font, plans);
   const zip = new JSZip();
   const folder = zip.folder(packageName(record))!;
   folder.folder("Photos");
@@ -97,10 +109,35 @@ export async function generatePackage(
       path: `Photos/${photoNumber(i)}_${safeName(p.caption || p.name).slice(0, 48)}_${safeName(p.id)}.${ext}`,
     };
   });
+  // Original drawings, unchanged, plus their metadata and annotations with the
+  // checklist-aligned labels shown in the report.
+  const drawingEntries = originals.map(({ drawing, bytes }, i) => {
+    const ext =
+      drawing.mimeType === "application/pdf"
+        ? "pdf"
+        : drawing.mimeType.split("/")[1].replace("jpeg", "jpg");
+    const path = `Drawings/D${i + 1}_${safeName(drawing.title || drawing.name).slice(0, 48)}.${ext}`;
+    folder.file(path, bytes);
+    return { ...drawing, path };
+  });
+  const labels = markLabels(
+    record.template.items,
+    plans?.annotations ?? [],
+    plans?.drawings ?? [],
+  );
   folder.file(
     "Inspection_Data.json",
     JSON.stringify(
-      { schemaVersion: 2, inspection: record, photos: photoEntries },
+      {
+        schemaVersion: 3,
+        inspection: record,
+        photos: photoEntries,
+        drawings: drawingEntries,
+        annotations: (plans?.annotations ?? []).map((a) => ({
+          ...a,
+          label: labels.get(a.id)?.label ?? "",
+        })),
+      },
       null,
       2,
     ),

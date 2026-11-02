@@ -6,6 +6,9 @@ import {
   validationIssues,
   formatInspectionNo,
   inspectionCode,
+  type Annotation,
+  type Drawing,
+  type DrawingFile,
   type Inspection,
   type StoredPhoto,
   type Project,
@@ -20,6 +23,9 @@ export class InspectionDB extends Dexie {
   photos!: Table<StoredPhoto, string>;
   templates!: Table<Template, string>;
   meta!: Table<{ key: string; value: string }, string>;
+  drawings!: Table<Drawing, string>;
+  drawingFiles!: Table<DrawingFile, string>;
+  annotations!: Table<Annotation, string>;
   constructor(name = "site-inspection-v1") {
     super(name);
     this.version(1).stores({
@@ -28,6 +34,12 @@ export class InspectionDB extends Dexie {
       photos: "id,inspectionId,itemId",
       templates: "id",
       meta: "key",
+    });
+    // Version 2 only ADDS tables for drawings; version 1 data is untouched.
+    this.version(2).stores({
+      drawings: "id,inspectionId",
+      drawingFiles: "id",
+      annotations: "id,inspectionId,drawingId",
     });
   }
 }
@@ -250,10 +262,54 @@ export async function numberForProject(record: Inspection, projectId: string) {
   );
 }
 export async function deleteInspection(id: string) {
-  await db.transaction("rw", db.inspections, db.photos, async () => {
-    await db.photos.where("inspectionId").equals(id).delete();
-    await db.inspections.delete(id);
-  });
+  await db.transaction(
+    "rw",
+    [db.inspections, db.photos, db.drawings, db.drawingFiles, db.annotations],
+    async () => {
+      await db.photos.where("inspectionId").equals(id).delete();
+      const drawingIds = await db.drawings
+        .where("inspectionId")
+        .equals(id)
+        .primaryKeys();
+      await db.drawingFiles.bulkDelete(drawingIds);
+      await db.drawings.bulkDelete(drawingIds);
+      await db.annotations.where("inspectionId").equals(id).delete();
+      await db.inspections.delete(id);
+    },
+  );
+}
+/**
+ * Copies an inspection's drawings and annotations to another inspection with new
+ * ids. Marks keep their checklist item ids (the template is copied unchanged).
+ */
+async function copyPlans(sourceId: string, targetId: string) {
+  const drawings = await db.drawings
+    .where("inspectionId")
+    .equals(sourceId)
+    .toArray();
+  const ids = new Map<string, string>();
+  for (const d of drawings) {
+    const file = await db.drawingFiles.get(d.id);
+    if (!file) continue; // a drawing without its file cannot be reproduced
+    const id = crypto.randomUUID();
+    ids.set(d.id, id);
+    await db.drawingFiles.add({ id, bytes: file.bytes.slice(0) });
+    await db.drawings.add({ ...d, id, inspectionId: targetId });
+  }
+  const annotations = await db.annotations
+    .where("inspectionId")
+    .equals(sourceId)
+    .toArray();
+  await db.annotations.bulkAdd(
+    annotations
+      .filter((a) => ids.has(a.drawingId))
+      .map((a) => ({
+        ...a,
+        id: crypto.randomUUID(),
+        inspectionId: targetId,
+        drawingId: ids.get(a.drawingId)!,
+      })),
+  );
 }
 // Repeat deliberately builds a new record from an allowlist; no result data is copied.
 export async function repeatInspection(source: Inspection) {
@@ -278,7 +334,17 @@ export async function repeatInspection(source: Inspection) {
     source.template,
   );
   record.fictional = source.fictional;
-  return addNumberedInspection(record);
+  // Drawings and their marked locations carry over to the repeat inspection, so
+  // the same locations can be re-inspected; results and photos do not.
+  return db.transaction(
+    "rw",
+    [db.inspections, db.meta, db.drawings, db.drawingFiles, db.annotations],
+    async () => {
+      const created = await addNumberedInspection(record);
+      await copyPlans(source.id, created.id);
+      return created;
+    },
+  );
 }
 // Never throws on a damaged workspace row: the app must still open so the user can
 // recover. The row itself is left untouched and reported by scanStoredData().
