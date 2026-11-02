@@ -15,6 +15,7 @@ import {
 } from "../domain";
 import { Button, Dialog, StatusBadge } from "./ui";
 import { download, generatePDF, loadFont } from "../export";
+import { loadReportPlans } from "../plan-render";
 import { PdfPreview } from "./PdfPreview";
 import { ReportTemplates } from "./ReportTemplates";
 import { DailyReportForm } from "./DailyReportForm";
@@ -43,7 +44,12 @@ export function Report({
     setBlob(undefined);
     (async () => {
       try {
-        const blob = await generatePDF(record, photos, await loadFont());
+        const blob = await generatePDF(
+          record,
+          photos,
+          await loadFont(),
+          await loadReportPlans(record.id),
+        );
         if (cancelled) return;
         objectURL = URL.createObjectURL(blob);
         setBlob(blob);

@@ -9,12 +9,18 @@ import {
   MAX_BACKUP_SIZE,
   type Inspection,
   type StoredPhoto,
+  annotationSchema,
+  drawingSchema,
+  type Annotation,
+  type Drawing,
+  type DrawingFile,
   templates as starterTemplates,
 } from "./domain";
 import { reportTemplateSchema, reportTemplateKey } from "./report-templates";
 import { fromStoredPhoto } from "./photos";
 import { describeZod, scanStoredData, type IntegrityIssue } from "./integrity";
 const metadataSchema = z.object({
+  markId: z.string().max(100).optional(),
   id: z.string().uuid(),
   inspectionId: z.string(),
   itemId: z.string(),
@@ -55,12 +61,16 @@ const backupSchema = z.object({
   inspections: z.array(inspectionSchema).max(10000),
   templates: z.array(templateSchema).max(100),
   photos: z.array(metadataSchema).max(10000),
+  // Added with plans; older backups simply have none.
+  drawings: z.array(drawingSchema).max(10000).default([]),
+  annotations: z.array(annotationSchema).max(500000).default([]),
 });
 type BackupData = z.infer<typeof backupSchema>;
 export class BackupTooLargeError extends Error {}
 export interface ParsedBackup {
   data: BackupData;
   photos: StoredPhoto[];
+  files: DrawingFile[];
 }
 const utf8Size = (text: string) => new Blob([text]).size;
 // jsPDF detects the image format from the bytes, so a file named .jpg but holding
@@ -135,7 +145,9 @@ export async function readBackup(
     !unique(data.projects.map((p) => p.id)) ||
     !unique(data.photos.map((p) => p.id)) ||
     !unique(data.templates.map((t) => t.id)) ||
-    !unique(data.reportTemplates.map((t) => t.id))
+    !unique(data.reportTemplates.map((t) => t.id)) ||
+    !unique(data.drawings.map((d) => d.id)) ||
+    !unique(data.annotations.map((a) => a.id))
   )
     throw new Error("Backup contains duplicate IDs.");
   const projects = new Set(data.projects.map((p) => p.id));
@@ -183,7 +195,32 @@ export async function readBackup(
       originalType,
     });
   }
-  return { data, photos };
+  // Drawings: each original must be present, intact and of its recorded size, and
+  // every annotation must belong to a drawing page of the same inspection.
+  const drawings = new Map(data.drawings.map((d) => [d.id, d]));
+  const files: DrawingFile[] = [];
+  for (const d of data.drawings) {
+    if (!records.has(d.inspectionId))
+      throw new Error("Backup drawing belongs to a missing inspection.");
+    const entry = zip.file(`drawings/${d.id}/original`);
+    if (!entry) throw new Error(`Backup drawing ${d.name} is missing.`);
+    const bytes = await entry.async("uint8array");
+    if (bytes.length !== d.size)
+      throw new Error("Drawing size does not match backup metadata.");
+    files.push({
+      id: d.id,
+      bytes: bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer,
+    });
+  }
+  for (const a of data.annotations) {
+    const d = drawings.get(a.drawingId);
+    if (!d || d.inspectionId !== a.inspectionId || a.page > d.pageCount)
+      throw new Error("Backup plan annotation association is invalid.");
+  }
+  return { data, photos, files };
 }
 
 export interface BackupFile {
@@ -318,6 +355,16 @@ export async function createBackupVolumes(
         256;
       photos++;
     }
+    for (const d of await db.drawings
+      .where("inspectionId")
+      .equals(record.id)
+      .toArray())
+      bytes += d.size + nested(d) + 256;
+    for (const a of await db.annotations
+      .where("inspectionId")
+      .equals(record.id)
+      .toArray())
+      bytes += nested(a) + 16;
     sized.push({ record, bytes, photos });
   }
 
@@ -333,7 +380,7 @@ export async function createBackupVolumes(
         excluded.push({
           kind: "inspection",
           id: item.record.id,
-          message: `Not backed up: record and photographs total ${(item.bytes / 1048576).toFixed(1)} MB, more than fits in one restorable backup file (${Math.round(maxBytes / 1048576)} MB). Use Download recovery data to keep a full copy.`,
+          message: `Not backed up: record, photographs and drawings total ${(item.bytes / 1048576).toFixed(1)} MB, more than fits in one restorable backup file (${Math.round(maxBytes / 1048576)} MB). Use Download recovery data to keep a full copy.`,
         });
         excludedIds.add(item.record.id);
       } else fit.push(item);
@@ -361,6 +408,8 @@ export async function createBackupVolumes(
     for (const [n, volume] of volumes.entries()) {
       const zip = new JSZip();
       const metadata: BackupData["photos"] = [];
+      const drawingMeta: Drawing[] = [];
+      const annotationMeta: Annotation[] = [];
       const ids = new Set(volume.map((v) => v.record.id));
       for (const { record } of volume) {
         const rows = await db.photos
@@ -406,12 +455,52 @@ export async function createBackupVolumes(
           zip.file(`photos/${row.id}/report.jpg`, compressed);
           metadata.push(check.data);
         }
+        // Drawings and annotations travel with their inspection. Anything that
+        // cannot be included is reported, never silently left out.
+        const kept = new Set<string>();
+        for (const d of await db.drawings
+          .where("inspectionId")
+          .equals(record.id)
+          .toArray()) {
+          const file = await db.drawingFiles.get(d.id);
+          const check = drawingSchema.safeParse(d);
+          if (!check.success || !file || file.bytes.byteLength !== d.size) {
+            excluded.push({
+              kind: "drawing",
+              id: d.id,
+              message: `Drawing "${d?.name}" not backed up: ${check.success ? "its original file is missing or damaged" : describeZod(check.error)}.`,
+            });
+            excludedIds.add(record.id);
+            continue;
+          }
+          zip.file(`drawings/${d.id}/original`, file.bytes);
+          drawingMeta.push(check.data);
+          kept.add(d.id);
+        }
+        for (const a of await db.annotations
+          .where("inspectionId")
+          .equals(record.id)
+          .toArray()) {
+          const check = annotationSchema.safeParse(a);
+          if (!check.success || !kept.has(a.drawingId)) {
+            excluded.push({
+              kind: "annotation",
+              id: a.id,
+              message: `Plan annotation not backed up: ${check.success ? "its drawing was not included" : describeZod(check.error)}.`,
+            });
+            excludedIds.add(record.id);
+            continue;
+          }
+          annotationMeta.push(check.data);
+        }
       }
       const document: Record<string, unknown> = {
         ...shared,
         exportedAt: snapshotAt,
         inspections: volume.map((v) => v.record),
         photos: metadata,
+        drawings: drawingMeta,
+        annotations: annotationMeta,
       };
       if (volumes.length > 1)
         document.volume = { id: volumeId, index: n + 1, total: volumes.length };
@@ -436,6 +525,20 @@ export async function createBackupVolumes(
         throw new Error(
           "Backup verification failed: the file does not contain the expected inspections.",
         );
+      if (
+        parsed.files.length !== drawingMeta.length ||
+        parsed.data.annotations.length !== annotationMeta.length
+      )
+        throw new Error(
+          "Backup verification failed: the file does not contain the expected drawings.",
+        );
+      for (const f of parsed.files) {
+        const fresh = await db.drawingFiles.get(f.id);
+        if (!fresh || !sameBytes(f.bytes, fresh.bytes))
+          throw new Error(
+            "Backup verification failed: a drawing did not match its stored original. Try again.",
+          );
+      }
       if (parsed.photos.length !== metadata.length)
         throw new Error(
           "Backup verification failed: the file does not contain the expected photographs.",
@@ -502,13 +605,32 @@ export async function importBackupDetailed(
   /** Imported numbers already used by a different local record (nothing is renumbered). */
   numberConflicts: string[];
 }> {
-  const { data, photos } = await readBackup(file, maxBytes);
+  const { data, photos, files } = await readBackup(file, maxBytes);
   const numberConflicts: string[] = [];
   // Only unchanged fictional starter records may be replaced. User work is never overwritten.
   await db.transaction(
     "rw",
-    [db.projects, db.inspections, db.photos, db.templates, db.meta],
+    [
+      db.projects,
+      db.inspections,
+      db.photos,
+      db.templates,
+      db.meta,
+      db.drawings,
+      db.drawingFiles,
+      db.annotations,
+    ],
     async () => {
+      for (const d of data.drawings)
+        if (await db.drawings.get(d.id))
+          throw new Error(
+            "A drawing in this backup already exists on this device. No records were imported.",
+          );
+      for (const a of data.annotations)
+        if (await db.annotations.get(a.id))
+          throw new Error(
+            "A plan annotation in this backup already exists on this device. No records were imported.",
+          );
       const seedRecords = JSON.parse(
         (await db.meta.get("seedRecords"))?.value || "{}",
       ) as Record<string, string>;
@@ -591,6 +713,9 @@ export async function importBackupDetailed(
       }
       await db.inspections.bulkPut(data.inspections);
       await db.photos.bulkAdd(photos);
+      await db.drawingFiles.bulkAdd(files);
+      await db.drawings.bulkAdd(data.drawings);
+      await db.annotations.bulkAdd(data.annotations);
       if (data.workspace && !(await db.meta.get("workspace")))
         await saveWorkspace(data.workspace);
       await db.meta.delete("seedRecords");

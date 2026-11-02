@@ -136,6 +136,8 @@ export interface Photo {
   reportGroup?: string;
   /** Observation about this specific photograph (distinct from its caption). */
   remark?: string;
+  /** Optional plan location mark this photograph was taken for. */
+  markId?: string;
 }
 /** Everything about a photograph except the full-size original. */
 export type PhotoMeta = Omit<Photo, "original">;
@@ -146,6 +148,67 @@ export type StoredPhoto = Omit<Photo, "original" | "compressed"> & {
   compressed: ArrayBuffer;
   originalType: string;
 };
+// ---- Drawings (plans) and their annotations --------------------------------
+export const DRAWING_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+export const MAX_DRAWING_SIZE = 25 * 1024 * 1024;
+export const MAX_DRAWINGS = 10;
+export const MAX_DRAWING_PAGES = 50;
+export const MAX_ANNOTATIONS = 500;
+export const drawingSchema = z.object({
+  id: z.string().uuid(),
+  inspectionId: z.string().min(1),
+  name: z.string().max(300),
+  title: z.string().max(300),
+  number: z.string().max(100),
+  revision: z.string().max(50),
+  mimeType: z.enum(DRAWING_TYPES),
+  size: z.number().int().positive().max(MAX_DRAWING_SIZE),
+  pageCount: z.number().int().min(1).max(MAX_DRAWING_PAGES),
+  order: z.number().int().min(0),
+  createdAt: z.string(),
+});
+export type Drawing = z.infer<typeof drawingSchema>;
+/** Original drawing bytes, stored apart from editable metadata and annotations. */
+export interface DrawingFile {
+  id: string;
+  bytes: ArrayBuffer;
+}
+const unit = z.number().finite().min(0).max(1);
+export const annotationSchema = z.object({
+  id: z.string().uuid(),
+  inspectionId: z.string().min(1),
+  drawingId: z.string().uuid(),
+  page: z.number().int().min(1).max(MAX_DRAWING_PAGES),
+  kind: z.enum(["marker", "rect", "circle", "arrow", "text"]),
+  /** Stable checklist item id (markers only). Never a displayed number. */
+  itemId: z.string().optional(),
+  // Drawing-relative coordinates (0..1 of page width / height).
+  x: unit,
+  y: unit,
+  x2: unit.optional(),
+  y2: unit.optional(),
+  text: z.string().max(120).optional(),
+  createdAt: z.string(),
+});
+export type Annotation = z.infer<typeof annotationSchema>;
+/** A drawing page rendered for the report (raster) plus everything to mark it up. */
+export interface PlanPageImage {
+  drawing: Drawing;
+  page: number;
+  jpeg: Uint8Array;
+  width: number;
+  height: number;
+}
+export interface ReportPlans {
+  drawings: Drawing[];
+  annotations: Annotation[];
+  pages: PlanPageImage[];
+}
 export const MAX_PHOTO_SIZE = 20 * 1024 * 1024;
 export const MAX_PHOTOS = 60;
 export const MAX_BACKUP_SIZE = 250 * 1024 * 1024;

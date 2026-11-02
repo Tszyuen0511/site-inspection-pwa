@@ -18,7 +18,9 @@ export type IssueKind =
   | "template"
   | "workspace"
   | "report-template"
-  | "photo";
+  | "photo"
+  | "drawing"
+  | "annotation";
 export interface IntegrityIssue {
   kind: IssueKind;
   id: string;

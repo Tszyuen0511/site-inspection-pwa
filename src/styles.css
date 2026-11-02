@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "./cobalt.css";
 @import "./inspection.css";
+@import "./plans.css";
 @custom-variant dark (&:where(.dark, .dark *));
 @theme {
   --font-sans:

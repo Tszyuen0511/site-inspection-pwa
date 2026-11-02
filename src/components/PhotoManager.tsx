@@ -362,7 +362,13 @@ export function PhotoManager({
               onDelete={() => setDeleting(photo)}
               onPatch={(patch) =>
                 void run(async () => {
-                  await editPhotos(() => db.photos.update(photo.id, patch));
+                  // A photo moved to another item no longer belongs to the old
+                  // item's plan location.
+                  const change =
+                    "itemId" in patch && patch.itemId !== photo.itemId
+                      ? { ...patch, markId: undefined }
+                      : patch;
+                  await editPhotos(() => db.photos.update(photo.id, change));
                 })
               }
               onMove={(direction) =>

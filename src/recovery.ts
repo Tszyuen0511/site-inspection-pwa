@@ -14,6 +14,7 @@ raw/*.json        every stored row of each table (settings, templates, backup
                   log and any quarantined copies are in raw/meta.json)
 photos/<id>/      original image and report image for each photograph
 photos/index.json photograph metadata (without image data)
+drawings/<id>/    original drawing files (metadata is in raw/drawings.json)
 manifest.json     counts, read errors and validation issues found
 `;
 /**
@@ -30,7 +31,14 @@ export async function createRecoveryDump(): Promise<Blob> {
   } catch (error) {
     errors.push(`validation scan failed: ${String(error)}`);
   }
-  for (const name of ["projects", "inspections", "templates", "meta"] as const)
+  for (const name of [
+    "projects",
+    "inspections",
+    "templates",
+    "meta",
+    "drawings",
+    "annotations",
+  ] as const)
     try {
       const rows = await db.table(name).toArray();
       counts[name] = rows.length;
@@ -60,6 +68,20 @@ export async function createRecoveryDump(): Promise<Blob> {
     errors.push(`photos: ${String(error)}`);
   }
   counts.photos = index.length;
+  try {
+    let n = 0;
+    await db.drawingFiles.each((row) => {
+      try {
+        zip.file(`drawings/${String(row.id)}/original`, row.bytes);
+        n++;
+      } catch (error) {
+        errors.push(`drawing file: ${String(error)}`);
+      }
+    });
+    counts.drawingFiles = n;
+  } catch (error) {
+    errors.push(`drawing files: ${String(error)}`);
+  }
   zip.file("photos/index.json", JSON.stringify(index, null, 2));
   zip.file(
     "manifest.json",

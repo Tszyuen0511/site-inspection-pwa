@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Download, FileText } from "lucide-react";
 import { errorMessage, type Inspection, type PhotoMeta } from "../domain";
 import { generatePDF, loadFont } from "../export";
+import { loadReportPlans } from "../plan-render";
 import { Button } from "./ui";
 import { PdfPreview } from "./PdfPreview";
 
@@ -25,7 +26,12 @@ export function ReportDock({
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const result = await generatePDF(record, photos, await loadFont());
+          const result = await generatePDF(
+            record,
+            photos,
+            await loadFont(),
+            await loadReportPlans(record.id),
+          );
           if (!cancelled) setBlob(result);
         } catch (e) {
           if (!cancelled) setError(errorMessage(e));
