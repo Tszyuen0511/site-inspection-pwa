@@ -73,7 +73,16 @@ test("GPS consent, weather snapshots, manual observations, offline persistence a
   await panel
     .getByRole("button", { name: "Get location", exact: true })
     .click();
-  await expect(panel.getByText(/GPS: 22.301235/)).toBeVisible();
+  // WebKit gives the emulated position a fixed timestamp. Supply a fresh
+  // sample after maximumAge: 0 starts acquisition, matching a real GPS update.
+  await context.setGeolocation({
+    latitude: 22.30123456,
+    longitude: 114.17123456,
+    accuracy: 15,
+  });
+  await expect(panel.getByText(/GPS: 22.301235/)).toBeVisible({
+    timeout: 20000,
+  });
   expect(requests).toBe(0);
   await panel.getByRole("checkbox").check();
   await panel

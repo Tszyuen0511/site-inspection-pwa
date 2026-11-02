@@ -820,3 +820,7 @@ textarea::placeholder {
 .environment-panel .checkbox-label {
   margin: 16px 0;
 }
+.environment-panel a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
