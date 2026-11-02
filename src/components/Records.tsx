@@ -21,7 +21,7 @@ export function Records({
   onOpen,
   onReport,
   onExport,
-  onDuplicate,
+  onRepeat,
   onDelete,
 }: {
   records: Inspection[];
@@ -31,7 +31,7 @@ export function Records({
   onOpen: (r: Inspection) => void;
   onReport: (r: Inspection) => void;
   onExport: (r: Inspection) => void;
-  onDuplicate: (r: Inspection) => void;
+  onRepeat: (r: Inspection) => void;
   onDelete: (r: Inspection) => void;
 }) {
   const [search, setSearch] = useState(""),
@@ -189,9 +189,9 @@ export function Records({
                 <Button
                   size="icon"
                   variant="ghost"
-                  aria-label={`Duplicate ${r.element}`}
-                  title="Duplicate inspection"
-                  onClick={() => onDuplicate(r)}
+                  aria-label={`Repeat ${r.element}`}
+                  title="Repeat inspection with blank results"
+                  onClick={() => onRepeat(r)}
                 >
                   <Copy size={17} />
                 </Button>

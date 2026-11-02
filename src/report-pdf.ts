@@ -564,7 +564,7 @@ export async function renderInspectionReport(
     { x: left, width, size: 9, bold: true },
   );
   paragraph(
-    `Inspection date / time: ${record.date} / ${record.time} (recorded local time)\nInspector: ${record.inspector} / ${record.role}\nPrepared by: ${daily.preparedBy || record.inspector}\nProject reference: ${record.projectReference}\nDrawing reference: ${record.drawing || "Not recorded"}\nTemplate: ${record.template.id} / version ${record.template.version}\nCreated: ${record.createdAt}\nUpdated: ${record.updatedAt}`,
+    `Inspection date / time: ${record.date} / ${record.time} (recorded local time)\nInspector: ${record.inspector} / ${record.role}${record.company ? `\nCompany: ${record.company}` : ""}\nPrepared by: ${daily.preparedBy || record.inspector}\nProject reference: ${record.projectReference}\nDrawing reference: ${record.drawing || "Not recorded"}\nTemplate: ${record.template.id} / version ${record.template.version}\nCreated: ${record.createdAt}\nUpdated: ${record.updatedAt}`,
     { x: left, width, size: 8.5 },
   );
   const checklist = record.template.items.map((item, index) => {

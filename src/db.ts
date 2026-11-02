@@ -8,6 +8,9 @@ import {
   type StoredPhoto,
   type Project,
   type Template,
+  localDate,
+  workspaceSchema,
+  type Workspace,
 } from "./domain";
 export class InspectionDB extends Dexie {
   projects!: Table<Project, string>;
@@ -132,30 +135,41 @@ export async function deleteInspection(id: string) {
     await db.inspections.delete(id);
   });
 }
-export async function duplicateInspection(source: Inspection) {
-  const record = {
-    ...structuredClone(source),
-    id: `INSP-${crypto.randomUUID().toUpperCase()}`,
-    status: "Draft" as const,
-    revision: 0,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  await db.transaction("rw", db.inspections, db.photos, async () => {
-    await db.inspections.add(record);
-    const photos = await db.photos
-      .where("inspectionId")
-      .equals(source.id)
-      .toArray();
-    await db.photos.bulkAdd(
-      photos.map((p) => ({
-        ...p,
-        id: crypto.randomUUID(),
-        inspectionId: record.id,
-      })),
-    );
-  });
+// Repeat deliberately builds a new record from an allowlist; no result data is copied.
+export async function repeatInspection(source: Inspection) {
+  const workspace = await loadWorkspace();
+  const now = new Date();
+  const record = newInspection(
+    {
+      projectId: source.projectId,
+      projectName: source.projectName,
+      projectReference: source.projectReference,
+      type: source.type,
+      element: source.element,
+      location: source.location,
+      drawing: source.drawing,
+      date: localDate(now),
+      time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+      inspector: workspace.inspector?.name || source.inspector,
+      role: workspace.inspector?.role || source.role,
+      company: workspace.inspector?.company || source.company,
+      remarks: "",
+    },
+    source.template,
+  );
+  record.fictional = source.fictional;
+  await db.inspections.add(record);
   return record;
+}
+export async function loadWorkspace(): Promise<Workspace> {
+  const row = await db.meta.get("workspace");
+  return row ? workspaceSchema.parse(JSON.parse(row.value)) : {};
+}
+export async function saveWorkspace(value: Workspace) {
+  await db.meta.put({
+    key: "workspace",
+    value: JSON.stringify(workspaceSchema.parse(value)),
+  });
 }
 export async function finalize(record: Inspection) {
   const issues = validationIssues(record);
@@ -169,12 +183,17 @@ export async function finalize(record: Inspection) {
   return completed;
 }
 export async function deleteProject(id: string) {
-  await db.transaction("rw", db.projects, db.inspections, async () => {
+  await db.transaction("rw", db.projects, db.inspections, db.meta, async () => {
     if (await db.inspections.where("projectId").equals(id).count())
       throw new Error(
         "This project has inspection records. Move or delete those records before deleting the project.",
       );
     await db.projects.delete(id);
+    const workspace = await loadWorkspace();
+    if (workspace.defaultProjectId === id) {
+      delete workspace.defaultProjectId;
+      await saveWorkspace(workspace);
+    }
   });
 }
 export { blankResponses };

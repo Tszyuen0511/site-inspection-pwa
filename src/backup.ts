@@ -1,8 +1,9 @@
 import JSZip from "jszip";
 import { z } from "zod";
-import { db } from "./db";
+import { db, loadWorkspace, saveWorkspace } from "./db";
 import {
   inspectionSchema,
+  workspaceSchema,
   projectSchema,
   templateSchema,
   MAX_BACKUP_SIZE,
@@ -34,7 +35,8 @@ const metadataSchema = z.object({
 });
 const backupSchema = z.object({
   format: z.literal("site-inspection-backup"),
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
+  workspace: workspaceSchema.optional(),
   exportedAt: z.string(),
   projects: z.array(projectSchema).max(10000),
   inspections: z.array(inspectionSchema).max(10000),
@@ -44,8 +46,9 @@ const backupSchema = z.object({
 export async function createBackup(): Promise<Blob> {
   const snapshot = await db.transaction(
     "r",
-    [db.projects, db.inspections, db.templates, db.photos],
+    [db.projects, db.inspections, db.templates, db.photos, db.meta],
     async () => ({
+      workspace: await loadWorkspace(),
       projects: await db.projects.toArray(),
       inspections: await db.inspections.toArray(),
       templates: await db.templates.toArray(),
@@ -70,7 +73,7 @@ export async function createBackup(): Promise<Blob> {
     JSON.stringify(
       {
         format: "site-inspection-backup",
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
         ...snapshot,
         photos: metadata,
@@ -116,6 +119,11 @@ export async function importBackup(file: Blob): Promise<number> {
   )
     throw new Error("Backup contains duplicate IDs.");
   const projects = new Set(data.projects.map((p) => p.id));
+  if (
+    data.workspace?.defaultProjectId &&
+    !projects.has(data.workspace.defaultProjectId)
+  )
+    throw new Error("Backup default project is missing.");
   const records = new Map(data.inspections.map((r) => [r.id, r]));
   for (const r of data.inspections) {
     if (!projects.has(r.projectId))
@@ -203,6 +211,8 @@ export async function importBackup(file: Blob): Promise<number> {
       }
       await db.inspections.bulkPut(data.inspections);
       await db.photos.bulkAdd(photos);
+      if (data.workspace && !(await db.meta.get("workspace")))
+        await saveWorkspace(data.workspace);
       await db.meta.delete("seedRecords");
       await db.meta.delete("seedProjects");
       await db.meta.put({ key: "initialized", value: "1" });

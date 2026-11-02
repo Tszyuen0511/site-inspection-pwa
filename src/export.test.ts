@@ -32,6 +32,7 @@ function photoFixture(
 describe("local reports and export", () => {
   it("generates an A4 PDF with exact recorded measurements and status", async () => {
     const r = fixture();
+    r.company = "WSP Test Company";
     r.responses["toe-level"].values = {
       measuredLevel: "-12.5000",
       specifiedLevel: "-12.0000",
@@ -44,6 +45,7 @@ describe("local reports and export", () => {
     expect(content.startsWith("%PDF-")).toBe(true);
     expect(content).toContain("-12.5000");
     expect(content).toContain("Fail");
+    expect(content).toContain("Company: WSP Test Company");
     const box = content.match(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/)!;
     expect(Number(box[1])).toBeCloseTo(595.28, 2);
     expect(Number(box[2])).toBeCloseTo(841.89, 2);

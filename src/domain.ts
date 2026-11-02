@@ -78,6 +78,7 @@ export const detailsSchema = z.object({
   location: required,
   inspector: required,
   role: required,
+  company: z.string().trim().max(500).optional(),
   drawing: z.string().max(1000),
   remarks: z.string().max(10000),
 });
@@ -94,10 +95,23 @@ export const inspectionSchema = detailsSchema.extend({
   dailyReport: dailyReportSchema.optional(),
 });
 export type Inspection = z.infer<typeof inspectionSchema>;
+export const inspectorProfileSchema = z.object({
+  name: required,
+  role: required,
+  company: required,
+});
+export type InspectorProfile = z.infer<typeof inspectorProfileSchema>;
+export const workspaceSchema = z.object({
+  inspector: inspectorProfileSchema.optional(),
+  defaultProjectId: z.string().max(500).optional(),
+});
+export type Workspace = z.infer<typeof workspaceSchema>;
 export const projectSchema = z.object({
   id: required,
   name: required,
   reference: required,
+  defaultLocation: z.string().max(500).optional(),
+  defaultDrawing: z.string().max(1000).optional(),
   fictional: z.boolean(),
 });
 export type Project = z.infer<typeof projectSchema>;

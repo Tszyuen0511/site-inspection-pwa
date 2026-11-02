@@ -29,9 +29,10 @@ import {
 import {
   db,
   deleteInspection,
-  duplicateInspection,
+  repeatInspection,
   finalize,
   seed,
+  loadWorkspace,
 } from "./db";
 import {
   errorMessage,
@@ -86,6 +87,7 @@ export default function App() {
     unsaved = useRef(false),
     failedSave = useRef(false),
     failedPhotos = useRef<Array<() => Promise<unknown>>>([]);
+  const workspace = useLiveQuery(loadWorkspace, [], {});
   const projects = useLiveQuery(() => db.projects.toArray(), [], []),
     templates = useLiveQuery(() => db.templates.toArray(), [], []),
     records = useLiveQuery(
@@ -729,12 +731,12 @@ export default function App() {
                   onReport={(r) => void open(r, "report")}
                   onExport={(r) => void exportZIP(r)}
                   onDelete={setDeleting}
-                  onDuplicate={(r) =>
+                  onRepeat={(r) =>
                     void run(async () => {
                       if (!(await flush())) return;
-                      activate(await duplicateInspection(r));
+                      activate(await repeatInspection(r));
                       setPage("checklist");
-                    }, "Inspection duplicated with a new ID. Original photographs copied locally.")
+                    }, "New repeat draft created. Previous results, photographs and report content were cleared.")
                   }
                 />
               )}
@@ -973,6 +975,7 @@ export default function App() {
         <InspectionForm
           projects={projects}
           templates={templates}
+          workspace={workspace}
           onCancel={() => setNewOpen(false)}
           onSubmit={async (details) => {
             await run(async () => {

@@ -25,6 +25,7 @@ import {
   type Project,
   type Template,
 } from "../domain";
+import { WorkspaceSettings } from "./WorkspaceSettings";
 import { Button, Dialog, Field } from "./ui";
 export function Settings({
   projects,
@@ -73,6 +74,7 @@ export function Settings({
           Device only
         </span>
       </div>
+      <WorkspaceSettings projects={projects} run={run} />
       <div className="settings-grid">
         <div>
           <section className="card settings-section">
@@ -454,6 +456,24 @@ export function Settings({
               }
             />
           </Field>
+          <Field label="Default location / chainage">
+            <input
+              maxLength={500}
+              value={project?.defaultLocation || ""}
+              onChange={(e) =>
+                setProject({ ...project, defaultLocation: e.target.value })
+              }
+            />
+          </Field>
+          <Field label="Default drawing / specification reference">
+            <input
+              maxLength={1000}
+              value={project?.defaultDrawing || ""}
+              onChange={(e) =>
+                setProject({ ...project, defaultDrawing: e.target.value })
+              }
+            />
+          </Field>
           <label className="checkbox-label">
             <input
               type="checkbox"
@@ -504,7 +524,7 @@ export function Settings({
         open={!!importFile}
         onOpenChange={(v) => !v && setImportFile(undefined)}
         title="Import local backup"
-        description="This adds validated records and photos. Untouched fictional starter records may be replaced. Conflicts with your own records are rejected without partial changes."
+        description="This adds validated records and photos. Untouched fictional starter records may be replaced. Conflicts with your own records are rejected without partial changes. Inspector profile and defaults are restored only when this device has no saved workspace settings."
       >
         <p>{importFile?.name}</p>
         <div className="form-actions">

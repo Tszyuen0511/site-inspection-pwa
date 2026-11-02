@@ -6,22 +6,26 @@ import {
   type Details,
   type Project,
   type Template,
+  type Workspace,
 } from "../domain";
 import { Button, Field } from "./ui";
 export function InspectionForm({
   projects,
   templates,
   initial,
+  workspace = {},
   onSubmit,
   onCancel,
 }: {
   projects: Project[];
   templates: Template[];
   initial?: Details;
+  workspace?: Workspace;
   onSubmit: (data: Details) => Promise<void>;
   onCancel: () => void;
 }) {
-  const first = projects[0];
+  const first =
+    projects.find((p) => p.id === workspace.defaultProjectId) || projects[0];
   const now = new Date();
   const {
     register,
@@ -39,10 +43,11 @@ export function InspectionForm({
       time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
       type: "Sheet Pile",
       element: "",
-      location: "",
-      inspector: "",
-      role: "TCP T3",
-      drawing: "",
+      location: first?.defaultLocation || "",
+      inspector: workspace.inspector?.name || "",
+      role: workspace.inspector?.role || "TCP T3",
+      company: workspace.inspector?.company || "",
+      drawing: first?.defaultDrawing || "",
       remarks: "",
     },
   });
@@ -58,6 +63,10 @@ export function InspectionForm({
             setValue("projectId", e.target.value, { shouldValidate: true });
             setValue("projectName", p?.name || "");
             setValue("projectReference", p?.reference || "");
+            if (!initial) {
+              setValue("location", p?.defaultLocation || "");
+              setValue("drawing", p?.defaultDrawing || "");
+            }
           }}
         >
           <option value="" disabled>
@@ -129,6 +138,19 @@ export function InspectionForm({
           </datalist>
         </Field>
       </div>
+      <Field label="Inspector company" error={errors.company?.message}>
+        <input
+          {...register("company")}
+          maxLength={500}
+          placeholder="[Company]"
+        />
+      </Field>
+      {!initial && !workspace.inspector && (
+        <p className="notice">
+          Set up your inspector profile in Settings to prefill your name, role
+          and company next time.
+        </p>
+      )}
       <Field
         label="Drawing / specification reference"
         error={errors.drawing?.message}
