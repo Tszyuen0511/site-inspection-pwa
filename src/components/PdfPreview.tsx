@@ -17,7 +17,7 @@ function PdfPage({
 }) {
   const wrapper = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null);
-  const [visible, setVisible] = useState(false),
+  const [visible, setVisible] = useState(pageNumber === 1),
     [width, setWidth] = useState(700),
     [rendered, setRendered] = useState(false),
     [error, setError] = useState("");

@@ -1,3 +1,5 @@
+import { useState } from "react";
+import type { ReportTemplate } from "../report-templates";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -14,6 +16,7 @@ export function InspectionForm({
   templates,
   initial,
   workspace = {},
+  reportTemplates = [],
   onSubmit,
   onCancel,
 }: {
@@ -21,9 +24,11 @@ export function InspectionForm({
   templates: Template[];
   initial?: Details;
   workspace?: Workspace;
-  onSubmit: (data: Details) => Promise<void>;
+  reportTemplates?: ReportTemplate[];
+  onSubmit: (data: Details, reportTemplateId?: string) => Promise<void>;
   onCancel: () => void;
 }) {
+  const [reportTemplateId, setReportTemplateId] = useState("");
   const first =
     projects.find((p) => p.id === workspace.defaultProjectId) || projects[0];
   const now = new Date();
@@ -53,7 +58,10 @@ export function InspectionForm({
   });
   const type = watch("type");
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="inspection-form">
+    <form
+      onSubmit={handleSubmit((data) => onSubmit(data, reportTemplateId))}
+      className="inspection-form"
+    >
       <div className="form-section-label">PROJECT & ELEMENT</div>
       <Field label="Project *" error={errors.projectId?.message}>
         <select
@@ -167,6 +175,21 @@ export function InspectionForm({
           placeholder="[Site observations and outstanding issues]"
         />
       </Field>
+      {!initial && reportTemplates.length > 0 && (
+        <Field label="Report template (optional)">
+          <select
+            value={reportTemplateId}
+            onChange={(e) => setReportTemplateId(e.target.value)}
+          >
+            <option value="">Blank report defaults</option>
+            {reportTemplates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
       <div className="form-actions">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel

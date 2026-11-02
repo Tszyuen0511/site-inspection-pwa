@@ -16,6 +16,7 @@ import {
 import { Button, Dialog, StatusBadge } from "./ui";
 import { download, generatePDF, loadFont } from "../export";
 import { PdfPreview } from "./PdfPreview";
+import { ReportTemplates } from "./ReportTemplates";
 import { DailyReportForm } from "./DailyReportForm";
 import type { DailyReport } from "../daily-report";
 export function Report({
@@ -99,6 +100,7 @@ export function Report({
           {photos.length} photos
         </span>
       </div>
+      <ReportTemplates record={record} onApply={onSaveDetails} />
       <div className="report-canvas">
         {error ? (
           <div className="empty-state">
