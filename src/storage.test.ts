@@ -206,7 +206,7 @@ it("round-trips profiles and project defaults without overwriting local settings
   expect(await loadWorkspace()).toEqual(current);
 });
 
-it.each([1, 2])(
+it.each([1, 2, 3])(
   "imports legacy v%s backups without adding company to old inspections",
   async (version) => {
     const { default: JSZip } = await import("jszip");

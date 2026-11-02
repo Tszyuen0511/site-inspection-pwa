@@ -47,13 +47,24 @@ import { Records } from "./components/Records";
 import { Checklist } from "./components/Checklist";
 import { InspectionForm } from "./components/InspectionForm";
 import { PhotoManager } from "./components/PhotoManager";
+import { ArchiveWorkspace } from "./components/ArchiveWorkspace";
+import { createBackup } from "./backup";
+import { loadReportTemplates, applyReportTemplate } from "./report-templates";
 import { Settings } from "./components/Settings";
 import { Report } from "./components/Report";
 import { generatePackage, generatePDF, download, loadFont } from "./export";
 import { wspLogo } from "./brand-assets";
 import { fromStoredPhoto } from "./photos";
 type Page =
-  "dashboard" | "records" | "checklist" | "photos" | "report" | "settings";
+  | "dashboard"
+  | "records"
+  | "checklist"
+  | "photos"
+  | "report"
+  | "settings"
+  | "photo-library"
+  | "report-library"
+  | "exports";
 interface InstallEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: string }>;
@@ -89,6 +100,7 @@ export default function App() {
     failedSave = useRef(false),
     failedPhotos = useRef<Array<() => Promise<unknown>>>([]);
   const workspace = useLiveQuery(loadWorkspace, [], {});
+  const reportTemplates = useLiveQuery(loadReportTemplates, [], []);
   const projects = useLiveQuery(() => db.projects.toArray(), [], []),
     templates = useLiveQuery(() => db.templates.toArray(), [], []),
     records = useLiveQuery(
@@ -338,11 +350,15 @@ export default function App() {
     }, "ZIP package generated and download requested.");
     setBusy(false);
   };
-  const exportPDF = async () => {
-    if (!(await flush()) || !activeRef.current) return;
+  const exportPDF = async (selected?: Inspection) => {
+    if (!(await flush()) || (!selected && !activeRef.current)) return;
     setBusy(true);
     await run(async () => {
-      const record = activeRef.current!;
+      const record = selected
+        ? selected.id === activeRef.current?.id
+          ? activeRef.current
+          : selected
+        : activeRef.current!;
       const photos = (
         await db.photos.where("inspectionId").equals(record.id).toArray()
       ).map(fromStoredPhoto);
@@ -351,6 +367,19 @@ export default function App() {
         packageName(record) + ".pdf",
       );
     }, "PDF generated and download requested.");
+    setBusy(false);
+  };
+  const exportBackup = async () => {
+    if (!(await flush())) return;
+    setBusy(true);
+    await run(
+      async () =>
+        download(
+          await createBackup(),
+          `Site_Inspection_Backup_${Date.now()}.zip`,
+        ),
+      "Complete backup download requested.",
+    );
     setBusy(false);
   };
   useEffect(() => {
@@ -369,8 +398,9 @@ export default function App() {
   const nav = [
     { id: "dashboard" as Page, label: "Overview", Icon: LayoutDashboard },
     { id: "records" as Page, label: "Inspection records", Icon: ClipboardList },
-    { id: "photos" as Page, label: "Photographs", Icon: Images },
-    { id: "report" as Page, label: "Reports & exports", Icon: Archive },
+    { id: "photo-library" as Page, label: "Photographs", Icon: Images },
+    { id: "report-library" as Page, label: "Reports", Icon: FileText },
+    { id: "exports" as Page, label: "Exports", Icon: Archive },
   ];
   const isEditor =
     page === "checklist" || page === "photos" || page === "report";
@@ -557,7 +587,13 @@ export default function App() {
                       ? "Photographs"
                       : page === "report"
                         ? "Report preview"
-                        : "Settings"}
+                        : page === "photo-library"
+                          ? "Photographs"
+                          : page === "report-library"
+                            ? "Reports"
+                            : page === "exports"
+                              ? "Exports"
+                              : "Settings"}
             </strong>
           </div>
           <div className="topbar-actions">
@@ -703,10 +739,19 @@ export default function App() {
                       if (r) void open(r, page);
                     }}
                   >
-                    {records.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.element} · {r.type} · {r.id.slice(-8)}
-                      </option>
+                    {projects.map((p) => (
+                      <optgroup key={p.id} label={p.name}>
+                        {records
+                          .filter((r) => r.projectId === p.id)
+                          .sort((a, b) => b.date.localeCompare(a.date))
+                          .map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.projectName} · {r.date} · {r.element} ·{" "}
+                              {r.type} ·{" "}
+                              {r.dailyReport?.reportNumber || r.id.slice(-8)}
+                            </option>
+                          ))}
+                      </optgroup>
                     ))}
                   </select>
                 </div>
@@ -807,6 +852,27 @@ export default function App() {
                   </Button>
                 </div>
               )}
+              {(page === "photo-library" ||
+                page === "report-library" ||
+                page === "exports") && (
+                <ArchiveWorkspace
+                  mode={
+                    page === "photo-library"
+                      ? "photos"
+                      : page === "report-library"
+                        ? "reports"
+                        : "exports"
+                  }
+                  records={records}
+                  projects={projects}
+                  onOpenPhotos={(r) => void open(r, "photos")}
+                  onOpenReport={(r) => void open(r, "report")}
+                  onPDF={(r) => void exportPDF(r)}
+                  onZIP={(r) => void exportZIP(r)}
+                  onSettings={() => void navigate("settings")}
+                  onBackup={() => void exportBackup()}
+                />
+              )}
               {page === "settings" && (
                 <Settings
                   projects={projects}
@@ -844,7 +910,7 @@ export default function App() {
           { id: "dashboard", label: "Overview", Icon: LayoutDashboard },
           { id: "records", label: "Records", Icon: ClipboardList },
           { id: "new", label: "New", Icon: Plus },
-          { id: "photos", label: "Photos", Icon: Images },
+          { id: "photo-library", label: "Photos", Icon: Images },
           { id: "settings", label: "Settings", Icon: Settings2 },
         ].map(({ id, label, Icon }) => (
           <button
@@ -937,6 +1003,22 @@ export default function App() {
           >
             Records
           </Button>
+          {[
+            { id: "photo-library", label: "Photographs" },
+            { id: "report-library", label: "Reports" },
+            { id: "exports", label: "Exports" },
+          ].map((item) => (
+            <Button
+              key={item.id}
+              variant="ghost"
+              onClick={() => {
+                setMenuOpen(false);
+                void navigate(item.id as Page);
+              }}
+            >
+              {item.label}
+            </Button>
+          ))}
           <Button
             variant="ghost"
             onClick={() => {
@@ -980,16 +1062,22 @@ export default function App() {
           projects={projects}
           templates={templates}
           workspace={workspace}
+          reportTemplates={reportTemplates}
           onCancel={() => setNewOpen(false)}
-          onSubmit={async (details) => {
+          onSubmit={async (details, reportTemplateId) => {
             await run(async () => {
               const t = templates.find((t) => t.name === details.type);
               if (!t) throw new Error("Select a valid template.");
               const p = projects.find((p) => p.id === details.projectId)!;
-              const r = {
+              const r: Inspection = {
                 ...newInspection(details, t),
                 fictional: p.fictional,
               };
+              const reportTemplate = reportTemplates.find(
+                (t) => t.id === reportTemplateId,
+              );
+              if (reportTemplate)
+                r.dailyReport = applyReportTemplate(r, reportTemplate);
               await db.inspections.add(r);
               activate(r);
               setPage("checklist");

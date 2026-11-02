@@ -131,7 +131,8 @@ export function Settings({
               <div>
                 <h2>Backup & restore</h2>
                 <p>
-                  A complete archive of records, templates and original photos.
+                  A complete archive of records, checklist/report templates and
+                  original photos.
                 </p>
               </div>
               <HardDrive size={21} className="text-blue" />

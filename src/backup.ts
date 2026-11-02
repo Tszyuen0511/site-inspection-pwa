@@ -10,6 +10,11 @@ import {
   type StoredPhoto,
   templates as starterTemplates,
 } from "./domain";
+import {
+  loadReportTemplates,
+  reportTemplateSchema,
+  reportTemplateKey,
+} from "./report-templates";
 import { fromStoredPhoto } from "./photos";
 const metadataSchema = z.object({
   id: z.string().uuid(),
@@ -35,8 +40,9 @@ const metadataSchema = z.object({
 });
 const backupSchema = z.object({
   format: z.literal("site-inspection-backup"),
-  version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   workspace: workspaceSchema.optional(),
+  reportTemplates: z.array(reportTemplateSchema).max(200).default([]),
   exportedAt: z.string(),
   projects: z.array(projectSchema).max(10000),
   inspections: z.array(inspectionSchema).max(10000),
@@ -49,6 +55,7 @@ export async function createBackup(): Promise<Blob> {
     [db.projects, db.inspections, db.templates, db.photos, db.meta],
     async () => ({
       workspace: await loadWorkspace(),
+      reportTemplates: await loadReportTemplates(),
       projects: await db.projects.toArray(),
       inspections: await db.inspections.toArray(),
       templates: await db.templates.toArray(),
@@ -73,7 +80,7 @@ export async function createBackup(): Promise<Blob> {
     JSON.stringify(
       {
         format: "site-inspection-backup",
-        version: 3,
+        version: 4,
         exportedAt: new Date().toISOString(),
         ...snapshot,
         photos: metadata,
@@ -115,7 +122,8 @@ export async function importBackup(file: Blob): Promise<number> {
     !unique(data.inspections.map((r) => r.id)) ||
     !unique(data.projects.map((p) => p.id)) ||
     !unique(data.photos.map((p) => p.id)) ||
-    !unique(data.templates.map((t) => t.id))
+    !unique(data.templates.map((t) => t.id)) ||
+    !unique(data.reportTemplates.map((t) => t.id))
   )
     throw new Error("Backup contains duplicate IDs.");
   const projects = new Set(data.projects.map((p) => p.id));
@@ -208,6 +216,33 @@ export async function importBackup(file: Blob): Promise<number> {
             "A template ID conflicts with a locally configured version. No records were imported.",
           );
         await db.templates.put(t);
+      }
+      const templateKeys = await db.meta
+        .where("key")
+        .startsWith("report-template:")
+        .primaryKeys();
+      if (
+        new Set([
+          ...templateKeys,
+          ...data.reportTemplates.map((t) => reportTemplateKey(t.id)),
+        ]).size > 200
+      )
+        throw new Error(
+          "Import would exceed the 200 report template limit. No data was imported.",
+        );
+      for (const template of data.reportTemplates) {
+        const key = reportTemplateKey(template.id);
+        const existing = await db.meta.get(key);
+        if (
+          existing &&
+          JSON.stringify(
+            reportTemplateSchema.parse(JSON.parse(existing.value)),
+          ) !== JSON.stringify(template)
+        )
+          throw new Error(
+            "A report template ID conflicts with a local template. No data was imported.",
+          );
+        await db.meta.put({ key, value: JSON.stringify(template) });
       }
       await db.inspections.bulkPut(data.inspections);
       await db.photos.bulkAdd(photos);
