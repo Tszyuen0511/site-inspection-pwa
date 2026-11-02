@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { db } from "./db";
+import { db, preserveIfInvalid } from "./db";
 import { dailyReportDefaults, type DailyReport } from "./daily-report";
 import type { Inspection } from "./domain";
 const short = z.string().max(500);
@@ -104,14 +104,29 @@ export function applyReportTemplate(
   return result;
 }
 export const reportTemplateKey = (id: string) => `report-template:${id}`;
+export const isValidReportTemplate = (raw: string) => {
+  try {
+    return reportTemplateSchema.safeParse(JSON.parse(raw)).success;
+  } catch {
+    return false;
+  }
+};
+// Damaged rows are left in place and reported by scanStoredData(); they never
+// prevent valid templates from loading.
 export async function loadReportTemplates(): Promise<ReportTemplate[]> {
   const rows = await db.meta
     .where("key")
     .startsWith("report-template:")
     .toArray();
-  return rows
-    .map((r) => reportTemplateSchema.parse(JSON.parse(r.value)))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const templates: ReportTemplate[] = [];
+  for (const r of rows)
+    try {
+      const parsed = reportTemplateSchema.safeParse(JSON.parse(r.value));
+      if (parsed.success) templates.push(parsed.data);
+    } catch {
+      /* Reported by scanStoredData(); the stored row is not modified. */
+    }
+  return templates.sort((a, b) => a.name.localeCompare(b.name));
 }
 export async function storeReportTemplate(template: ReportTemplate) {
   const valid = reportTemplateSchema.parse(template);
@@ -123,6 +138,7 @@ export async function storeReportTemplate(template: ReportTemplate) {
       throw new Error(
         "Maximum 200 report templates. Remove unused templates first.",
       );
+    await preserveIfInvalid(reportTemplateKey(valid.id), isValidReportTemplate);
     await db.meta.put({
       key: reportTemplateKey(valid.id),
       value: JSON.stringify(valid),

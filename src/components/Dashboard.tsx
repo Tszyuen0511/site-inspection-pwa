@@ -8,10 +8,12 @@ import {
   Plus,
   TriangleAlert,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { Inspection, Project } from "../domain";
 import { progress } from "../domain";
 import { Button, StatusBadge } from "./ui";
 export function Dashboard({
+  banner,
   records,
   projects,
   onNew,
@@ -19,6 +21,7 @@ export function Dashboard({
   onRecords,
   onSettings,
 }: {
+  banner?: ReactNode;
   records: Inspection[];
   projects: Project[];
   onNew: () => void;
@@ -80,6 +83,7 @@ export function Dashboard({
           New inspection
         </Button>
       </div>
+      {banner}
       <div className="stats-grid">
         {stats.map(({ label, value, caption, Icon, tone, filter }) => (
           <button
@@ -201,9 +205,7 @@ export function Dashboard({
         </span>
         <div>
           <strong>Back up inspection records</strong>
-          <p>
-            Browser storage can be cleared. Export a backup regularly.
-          </p>
+          <p>Browser storage can be cleared. Export a backup regularly.</p>
         </div>
         <Button variant="ghost" size="sm" onClick={onSettings}>
           <ArrowDownToLine size={16} />

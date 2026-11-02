@@ -161,14 +161,42 @@ export async function repeatInspection(source: Inspection) {
   await db.inspections.add(record);
   return record;
 }
+// Never throws on a damaged workspace row: the app must still open so the user can
+// recover. The row itself is left untouched and reported by scanStoredData().
 export async function loadWorkspace(): Promise<Workspace> {
   const row = await db.meta.get("workspace");
-  return row ? workspaceSchema.parse(JSON.parse(row.value)) : {};
+  if (!row) return {};
+  try {
+    return workspaceSchema.parse(JSON.parse(row.value));
+  } catch {
+    return {};
+  }
 }
+export const quarantineKey = (key: string, at = new Date()) =>
+  `quarantine:${key}:${at.toISOString()}`;
+// Call inside a read-write meta transaction before replacing a row that no longer
+// validates, so the raw value is never destroyed by a normal save.
+export async function preserveIfInvalid(
+  key: string,
+  isValid: (raw: string) => boolean,
+) {
+  const existing = await db.meta.get(key);
+  if (existing && !isValid(existing.value))
+    await db.meta.put({ key: quarantineKey(key), value: existing.value });
+}
+const validWorkspace = (raw: string) => {
+  try {
+    workspaceSchema.parse(JSON.parse(raw));
+    return true;
+  } catch {
+    return false;
+  }
+};
 export async function saveWorkspace(value: Workspace) {
-  await db.meta.put({
-    key: "workspace",
-    value: JSON.stringify(workspaceSchema.parse(value)),
+  const parsed = workspaceSchema.parse(value);
+  await db.transaction("rw", db.meta, async () => {
+    await preserveIfInvalid("workspace", validWorkspace);
+    await db.meta.put({ key: "workspace", value: JSON.stringify(parsed) });
   });
 }
 export async function finalize(record: Inspection) {

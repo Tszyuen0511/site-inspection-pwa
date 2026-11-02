@@ -48,7 +48,24 @@ import { Checklist } from "./components/Checklist";
 import { InspectionForm } from "./components/InspectionForm";
 import { PhotoManager } from "./components/PhotoManager";
 import { ArchiveWorkspace } from "./components/ArchiveWorkspace";
-import { createBackup } from "./backup";
+import { exportBackupFiles } from "./backup-export";
+import { EMPTY_SCAN, scanStoredData } from "./integrity";
+import {
+  backupStatus,
+  clearUserDataMarker,
+  ensurePersistence,
+  loadBackupLog,
+  markUserData,
+  readPersistence,
+  suspectedStorageLoss,
+  type Persistence,
+} from "./storage-health";
+import {
+  BackupReminder,
+  IntegrityBanner,
+  RecoveryButton,
+  StorageLossBanner,
+} from "./components/StorageNotices";
 import { loadReportTemplates, applyReportTemplate } from "./report-templates";
 import { Settings } from "./components/Settings";
 import { Report } from "./components/Report";
@@ -93,7 +110,10 @@ export default function App() {
         return "light";
       }
     }),
-    [installEvent, setInstallEvent] = useState<InstallEvent>();
+    [installEvent, setInstallEvent] = useState<InstallEvent>(),
+    [lossSuspected, setLossSuspected] = useState(false),
+    [persistence, setPersistence] = useState<Persistence>("unsupported"),
+    [integrityOpen, setIntegrityOpen] = useState(false);
   const activeRef = useRef<Inspection | undefined>(undefined),
     queue = useRef<Promise<unknown>>(Promise.resolve()),
     unsaved = useRef(false),
@@ -101,13 +121,17 @@ export default function App() {
     failedPhotos = useRef<Array<() => Promise<unknown>>>([]);
   const workspace = useLiveQuery(loadWorkspace, [], {});
   const reportTemplates = useLiveQuery(loadReportTemplates, [], []);
-  const projects = useLiveQuery(() => db.projects.toArray(), [], []),
-    templates = useLiveQuery(() => db.templates.toArray(), [], []),
-    records = useLiveQuery(
-      () => db.inspections.orderBy("updatedAt").reverse().toArray(),
-      [],
-      [],
+  // One validated read. Rows that fail validation are reported (never deleted).
+  // Scan only once seeding has finished so the first result is never a stale empty one.
+  const scanned = useLiveQuery(
+      () => (initialized ? scanStoredData() : undefined),
+      [initialized],
     ),
+    stored = scanned ?? EMPTY_SCAN,
+    { projects, templates, inspections: records, issues } = stored,
+    backupRow = useLiveQuery(async () => ({ log: await loadBackupLog() }), []),
+    backupLog = backupRow?.log,
+    initializedRow = useLiveQuery(() => db.meta.get("initialized"), [], null),
     allPhotos = useLiveQuery(
       async () =>
         active?.id
@@ -145,10 +169,23 @@ export default function App() {
   )
     photoCache.current = selectedPhotos;
   useEffect(() => {
-    void seed()
-      .then(() => setInitialized(true))
-      .catch((e) => setFatal(errorMessage(e)));
+    void (async () => {
+      // If this browser remembers user data but the database is brand new, do not
+      // add demonstration data that would hide a possible storage loss.
+      if (suspectedStorageLoss(!!(await db.meta.get("initialized")))) {
+        setLossSuspected(true);
+      } else await seed();
+      setInitialized(true);
+    })().catch((e) => setFatal(errorMessage(e)));
   }, []);
+  const hiddenInvalid = issues.filter((i) => i.kind === "inspection").length;
+  const hasUserData = hiddenInvalid > 0 || records.some((r) => !r.fictional);
+  useEffect(() => {
+    void readPersistence().then(setPersistence);
+    if (!hasUserData) return;
+    markUserData();
+    void ensurePersistence().then(setPersistence);
+  }, [hasUserData]);
   useEffect(() => {
     let cancelled = false;
     if ("serviceWorker" in navigator && "caches" in window)
@@ -372,14 +409,12 @@ export default function App() {
   const exportBackup = async () => {
     if (!(await flush())) return;
     setBusy(true);
-    await run(
-      async () =>
-        download(
-          await createBackup(),
-          `Site_Inspection_Backup_${Date.now()}.zip`,
-        ),
-      "Complete backup download requested.",
-    );
+    await run(async () => {
+      const outcome = await exportBackupFiles();
+      // Warnings stay on screen until dismissed; they are never auto-hidden.
+      setNotice({ message: outcome.message, error: outcome.warning });
+      if (outcome.warning) setIntegrityOpen(true);
+    });
     setBusy(false);
   };
   useEffect(() => {
@@ -695,14 +730,37 @@ export default function App() {
                 storage is available.
               </p>
               <Button onClick={() => window.location.reload()}>Retry</Button>
+              <RecoveryButton />
             </div>
-          ) : !initialized ? (
+          ) : !initialized || !scanned ? (
             <div className="empty-state">
               <Loader2 className="animate-spin" />
               <p>Opening your local workspace…</p>
             </div>
           ) : (
             <>
+              {lossSuspected &&
+                !initializedRow &&
+                !records.length &&
+                !projects.length && (
+                  <StorageLossBanner
+                    onSettings={() => void navigate("settings")}
+                    onContinue={() =>
+                      void run(async () => {
+                        clearUserDataMarker();
+                        await seed();
+                        setLossSuspected(false);
+                      })
+                    }
+                  />
+                )}
+              <IntegrityBanner
+                issues={issues}
+                onDetails={() => {
+                  setIntegrityOpen(true);
+                  void navigate("settings");
+                }}
+              />
               {isEditor && active && (
                 <div className="editor-navigation">
                   <Button
@@ -758,6 +816,23 @@ export default function App() {
               )}
               {page === "dashboard" && (
                 <Dashboard
+                  banner={
+                    <BackupReminder
+                      status={
+                        backupRow
+                          ? backupStatus(
+                              records,
+                              backupLog,
+                              Date.now(),
+                              hiddenInvalid,
+                            )
+                          : { state: "none", unbacked: 0 }
+                      }
+                      persistence={persistence}
+                      busy={busy}
+                      onBackup={() => void exportBackup()}
+                    />
+                  }
                   records={records}
                   projects={projects}
                   onNew={() => setNewOpen(true)}
@@ -875,6 +950,10 @@ export default function App() {
               )}
               {page === "settings" && (
                 <Settings
+                  onPersistence={setPersistence}
+                  issues={issues}
+                  integrityOpen={integrityOpen}
+                  backupLog={backupLog}
                   projects={projects}
                   templates={templates}
                   theme={theme}
@@ -1052,7 +1131,7 @@ export default function App() {
         </nav>
       </Dialog>
       <Dialog
-        open={newOpen}
+        open={newOpen && !!scanned}
         onOpenChange={setNewOpen}
         title="New inspection"
         description="Set up your field record. You can save and resume the checklist at any time."
