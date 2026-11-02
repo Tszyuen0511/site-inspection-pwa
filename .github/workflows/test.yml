@@ -20,6 +20,11 @@ jobs:
       - run: npm run build
         env:
           VITE_BASE_PATH: /site-inspection-pwa/
+      - name: Check native WebKit geolocation integration first
+        run: npm run test:e2e -- e2e/phase2.spec.ts --project=mobile-webkit
+        env:
+          CI: "true"
+          VITE_BASE_PATH: /site-inspection-pwa/
       - run: npm run test:e2e
         env:
           CI: "true"

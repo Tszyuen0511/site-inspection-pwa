@@ -80,9 +80,40 @@ test("GPS consent, weather snapshots, manual observations, offline persistence a
     longitude: 114.17123456,
     accuracy: 15,
   });
-  await expect(panel.getByText(/GPS: 22.301235/)).toBeVisible({
-    timeout: 20000,
-  });
+  try {
+    await expect(panel.getByText(/GPS: 22.301235/)).toBeVisible({
+      timeout: 20000,
+    });
+  } catch (error) {
+    console.log("GPS panel diagnostics:", await panel.innerText());
+    console.log(
+      "Secure context:",
+      await page.evaluate(() => ({
+        secure: window.isSecureContext,
+        geolocation: !!navigator.geolocation,
+      })),
+    );
+    console.log(
+      "Native sample:",
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            navigator.geolocation.getCurrentPosition(
+              (p) =>
+                resolve({
+                  latitude: p.coords.latitude,
+                  longitude: p.coords.longitude,
+                  accuracy: p.coords.accuracy,
+                  timestamp: p.timestamp,
+                }),
+              (e) => resolve({ error: e.code, message: e.message }),
+              { timeout: 3000, maximumAge: 60000 },
+            ),
+          ),
+      ),
+    );
+    throw error;
+  }
   expect(requests).toBe(0);
   await panel.getByRole("checkbox").check();
   await panel
