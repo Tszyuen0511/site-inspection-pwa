@@ -7,6 +7,7 @@ import {
   type Response,
 } from "../domain";
 import { Button, Dialog, Field, StatusBadge } from "./ui";
+import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ItemPhotos } from "./ItemPhotos";
 import { ReportDock } from "./ReportDock";
 
@@ -153,6 +154,7 @@ export function Checklist({
             </Field>
           </div>
         </section>
+        <EnvironmentPanel key={record.id} record={record} onChange={onChange} />
         <section
           id="inspection-checklist"
           className="inspection-section"

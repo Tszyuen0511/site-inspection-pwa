@@ -50,6 +50,7 @@ import { PhotoManager } from "./components/PhotoManager";
 import { Settings } from "./components/Settings";
 import { Report } from "./components/Report";
 import { generatePackage, generatePDF, download, loadFont } from "./export";
+import { wspLogo } from "./brand-assets";
 import { fromStoredPhoto } from "./photos";
 type Page =
   "dashboard" | "records" | "checklist" | "photos" | "report" | "settings";
@@ -528,7 +529,10 @@ export default function App() {
       <div className="main-shell">
         <header className="topbar">
           <div className="header-identity">
-            <strong>Site Inspection</strong>
+            <strong>
+              <img src={wspLogo} alt="WSP" className="wsp-logo" /> Site
+              Inspection
+            </strong>
             <span role="status" aria-live="polite">
               {isEditor && active
                 ? active.status !== "Draft"

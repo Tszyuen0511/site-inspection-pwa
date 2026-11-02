@@ -162,3 +162,37 @@ describe("local reports and export", () => {
     expect(data.inspection.dailyReport).toEqual(r.dailyReport);
   });
 });
+
+it("includes GPS and stored forecast provenance alongside manual observations", async () => {
+  const r = fixture();
+  r.gps = {
+    latitude: 22.3,
+    longitude: 114.17,
+    accuracy: 10,
+    capturedAt: "2026-11-02T02:00:00.000Z",
+  };
+  r.weatherSnapshot = {
+    provider: "MET Norway",
+    kind: "model forecast",
+    latitude: 22.3,
+    longitude: 114.17,
+    validAt: "2026-11-02T02:00:00.000Z",
+    issuedAt: "2026-11-02T01:00:00.000Z",
+    retrievedAt: "2026-11-02T02:05:00.000Z",
+    temperatureC: 25,
+    windSpeedMs: 3,
+    summary: "cloudy",
+  };
+  r.dailyReport = {
+    ...dailyReportDefaults(r),
+    weather: "Observed drizzle on site",
+  };
+  const text = await (await generatePDF(r, [])).text();
+  const pdfLines = [...text.matchAll(/\(([^\n]*?)\) Tj/g)]
+    .map((m) => m[1])
+    .join(" ");
+  expect(pdfLines.includes("Observed drizzle on site")).toBe(true);
+  expect(text.includes("MET Norway")).toBe(true);
+  expect(text.includes("22.300000")).toBe(true);
+  expect(text.includes("2026-11-02T02:05:00.000Z")).toBe(true);
+});

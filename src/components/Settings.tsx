@@ -413,8 +413,9 @@ export function Settings({
           <div className="subtle-note">
             <ShieldCheck size={20} />
             <span>
-              No accounts, cloud storage, analytics or telemetry. All processing
-              happens in your browser.
+              No accounts, cloud storage, analytics or telemetry. Optional
+              weather requests send coordinates to MET Norway only with your
+              consent. Report processing happens in your browser.
             </span>
           </div>
         </aside>

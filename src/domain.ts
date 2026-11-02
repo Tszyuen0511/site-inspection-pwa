@@ -1,5 +1,6 @@
 import { z } from "zod";
 import rawTemplates from "./templates.json";
+import { gpsSchema, weatherSchema } from "./environment-schema";
 import { dailyReportSchema } from "./daily-report";
 export const fieldSchema = z.object({
   key: z.string().min(1),
@@ -93,6 +94,8 @@ export const inspectionSchema = detailsSchema.extend({
   responses: z.record(z.string(), responseSchema),
   fictional: z.boolean(),
   dailyReport: dailyReportSchema.optional(),
+  gps: gpsSchema.optional(),
+  weatherSnapshot: weatherSchema.optional(),
 });
 export type Inspection = z.infer<typeof inspectionSchema>;
 export const inspectorProfileSchema = z.object({
