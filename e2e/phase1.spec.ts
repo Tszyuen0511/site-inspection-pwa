@@ -7,7 +7,7 @@ test("profile and project defaults persist; repeat clears results offline", asyn
 }, info) => {
   await page.goto("./");
   await expect(
-    page.getByRole("heading", { name: "Overview", exact: true }),
+    page.getByRole("heading", { name: /^Inspection records/ }),
   ).toBeVisible();
   await workspaceNav(page, "Settings");
   await page.getByLabel("Profile inspector name *").fill("Phase One Inspector");
@@ -40,7 +40,12 @@ test("profile and project defaults persist; repeat clears results offline", asyn
   await expect(page.getByLabel("Profile inspector name *")).toHaveValue(
     "Phase One Inspector",
   );
-  await workspaceNav(page, "Overview");
+  await workspaceNav(
+    page,
+    (page.viewportSize()?.width ?? 1280) <= 760
+      ? "Records"
+      : "Inspection records",
+  );
   await page
     .getByRole("button", { name: "New inspection", exact: true })
     .first()

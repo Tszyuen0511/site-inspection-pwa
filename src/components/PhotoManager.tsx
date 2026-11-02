@@ -107,32 +107,6 @@ function PhotoCard({
             placeholder="Observation about this photograph (printed under it)"
           />
         </Field>
-        <Field label="Report section">
-          <select
-            disabled={readonly}
-            value={photo.reportSection || "site"}
-            onChange={(e) =>
-              onPatch({
-                reportSection: e.target.value as Photo["reportSection"],
-              })
-            }
-          >
-            <option value="site">Site photos</option>
-            <option value="core">Core sample log</option>
-            <option value="plan">Site progress plan</option>
-          </select>
-        </Field>
-        {photo.reportSection === "core" && (
-          <Field label="Core log element / group">
-            <input
-              maxLength={500}
-              disabled={readonly}
-              defaultValue={photo.reportGroup || ""}
-              onChange={(e) => onPatch({ reportGroup: e.target.value })}
-              placeholder="e.g. BH1 or SP-001"
-            />
-          </Field>
-        )}
         <Field label="Related checklist item">
           <select
             disabled={readonly}

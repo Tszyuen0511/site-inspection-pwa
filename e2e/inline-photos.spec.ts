@@ -14,7 +14,7 @@ test("inline batch photos, native capture, caption saving, custom items and prin
     await page.setViewportSize({ width: 1280, height: 900 });
   else await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("./");
-  await page.locator(".recent-row").filter({ hasText: "SP-002" }).click();
+  await page.getByRole("button", { name: "Open SP-002", exact: true }).click();
   await page.getByLabel("Project name", { exact: true }).fill("[Project name]");
   await page
     .getByLabel("Location / zone", { exact: true })
@@ -169,13 +169,12 @@ test("inline batch photos, native capture, caption saving, custom items and prin
     .boundingBox();
   expect(controls!.height).toBeGreaterThanOrEqual(48);
   if (testInfo.project.name === "desktop-chromium") {
+    // The side report preview was removed; the PDF bar stays available.
     await expect(
-      page.locator(".report-dock canvas[data-rendered=true]"),
+      page.getByRole("button", { name: "Save as PDF", exact: true }),
     ).toBeVisible();
-    const sidebar = await page.locator(".sidebar").boundingBox(),
-      dock = await page.locator(".report-dock").boundingBox();
+    const sidebar = await page.locator(".sidebar").boundingBox();
     expect(sidebar!.width).toBe(240);
-    expect(dock!.width).toBe(340);
     const captionBox = await first
       .getByLabel("Caption for P04", { exact: true })
       .boundingBox();

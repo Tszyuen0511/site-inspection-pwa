@@ -607,7 +607,8 @@ textarea::placeholder {
     display: none;
   }
   .inspection-workspace {
-    grid-template-columns: minmax(0, 1fr) 340px;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 1040px;
     gap: 24px;
   }
   .project-details-card {
@@ -687,11 +688,11 @@ textarea::placeholder {
   .inline-caption input {
     font-size: 16px;
   }
+  /* Wide screens: the PDF bar stays (the side preview was removed), compact. */
   .inspection-pdf-bar {
-    display: none;
-  }
-  .checklist-screen main {
-    padding-bottom: 32px;
+    grid-template-columns: auto auto;
+    justify-content: end;
+    padding: 12px 24px;
   }
 }
 @media (min-width: 761px) and (max-width: 1179px) {
@@ -958,4 +959,11 @@ textarea::placeholder {
   .library-record .row > button {
     flex: 1 1 140px;
   }
+}
+
+.environment-card {
+  padding: 16px;
+}
+.environment-card .field {
+  margin: 0;
 }

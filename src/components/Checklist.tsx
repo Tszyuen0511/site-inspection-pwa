@@ -10,7 +10,6 @@ import {
 import { Button, Dialog, Field, StatusBadge } from "./ui";
 import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ItemPhotos } from "./ItemPhotos";
-import { ReportDock } from "./ReportDock";
 
 export function Checklist({
   record,
@@ -37,15 +36,6 @@ export function Checklist({
 }) {
   const [adding, setAdding] = useState(false),
     [itemName, setItemName] = useState("");
-  const [wide, setWide] = useState(
-    () => window.matchMedia("(min-width: 1180px)").matches,
-  );
-  useEffect(() => {
-    const media = window.matchMedia("(min-width: 1180px)");
-    const update = () => setWide(media.matches);
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
   const p = progress(record),
     readOnly = record.status !== "Draft";
   const change = (id: string, patch: Partial<Response>) =>
@@ -365,14 +355,6 @@ export function Checklist({
           )}
         </section>
       </div>
-      {wide && (
-        <ReportDock
-          record={record}
-          photos={photos}
-          onPreview={onPreview}
-          onPDF={onPDF}
-        />
-      )}
       <div className="inspection-pdf-bar">
         <Button variant="outline" onClick={onPreview}>
           Preview
