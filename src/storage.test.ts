@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { db, deleteInspection, duplicateInspection, finalize } from "./db";
+import {
+  db,
+  deleteInspection,
+  repeatInspection,
+  finalize,
+  loadWorkspace,
+  saveWorkspace,
+} from "./db";
 import { newInspection, templates, type Photo } from "./domain";
 import { createBackup, importBackup } from "./backup";
 import { toStoredPhoto, fromStoredPhoto } from "./photos";
@@ -76,7 +83,7 @@ describe("local persistence", () => {
     await expect(importBackup(zip)).rejects.toThrow("already exists");
     expect(await db.inspections.count()).toBe(1);
   });
-  it("duplicates photographs under new stable IDs and cascades deletion", async () => {
+  it("repeats with blank results and no photographs, preserving the source", async () => {
     const r = newInspection(details, templates[0]);
     await db.inspections.add(r);
     const id = crypto.randomUUID();
@@ -95,16 +102,41 @@ describe("local persistence", () => {
         createdAt: r.createdAt,
       }),
     );
-    const copy = await duplicateInspection(r);
+    r.responses["toe-level"].status = "Fail";
+    r.responses["toe-level"].remarks = "Old failure";
+    r.responses["toe-level"].values = { measuredLevel: "-12" };
+    r.dailyReport = {
+      ...dailyReportDefaults(r),
+      weather: "Old weather",
+      activities: "Old work",
+    };
+    await db.inspections.put(r);
+    await saveWorkspace({
+      inspector: { name: "Current Inspector", role: "ARE", company: "Test Co" },
+    });
+    const copy = await repeatInspection(r);
+    expect(copy.responses["toe-level"]).toEqual({
+      status: "Not Inspected",
+      remarks: "",
+      reference: "",
+      values: {},
+    });
+    expect(copy.dailyReport).toBeUndefined();
+    expect(copy.remarks).toBe("");
+    expect(copy.inspector).toBe("Current Inspector");
+    expect(copy.company).toBe("Test Co");
+    expect(copy.date).not.toBe(r.date);
+    expect(copy.id).not.toBe(r.id);
+    expect(copy.template).toEqual(r.template);
+    expect(await db.inspections.get(r.id)).toEqual(r);
     const photos = await db.photos
       .where("inspectionId")
       .equals(copy.id)
       .toArray();
-    expect(photos).toHaveLength(1);
-    expect(photos[0].id).not.toBe(id);
+    expect(photos).toHaveLength(0);
     await deleteInspection(r.id);
     expect(await db.photos.get(id)).toBeUndefined();
-    expect(await db.photos.get(photos[0].id)).toBeDefined();
+    expect(await db.inspections.get(copy.id)).toBeDefined();
   });
   it("surfaces storage write failures", async () => {
     const spy = vi
@@ -140,4 +172,70 @@ describe("local persistence", () => {
       "local-1.2.0",
     );
   });
+});
+
+it("round-trips profiles and project defaults without overwriting local settings", async () => {
+  const project = {
+    id: "p",
+    name: "Project",
+    reference: "P1",
+    fictional: false,
+    defaultLocation: "Zone B",
+    defaultDrawing: "DWG-2",
+  };
+  await db.projects.add(project);
+  const workspace = {
+    inspector: { name: "Larry", role: "TCP T3", company: "WSP" },
+    defaultProjectId: "p",
+  };
+  await saveWorkspace(workspace);
+  db.close();
+  await db.open();
+  expect(await loadWorkspace()).toEqual(workspace);
+  const backup = await createBackup();
+  await db.projects.clear();
+  await db.meta.clear();
+  await importBackup(backup);
+  expect(await loadWorkspace()).toEqual(workspace);
+  expect(await db.projects.get("p")).toEqual(project);
+  const current = {
+    inspector: { name: "Another Inspector", role: "ARE", company: "Other" },
+  };
+  await saveWorkspace(current);
+  await importBackup(backup);
+  expect(await loadWorkspace()).toEqual(current);
+});
+
+it("imports legacy v1 backups without adding company to old inspections", async () => {
+  const { default: JSZip } = await import("jszip");
+  const record = newInspection(details, templates[0]);
+  const zip = new JSZip();
+  zip.file(
+    "backup.json",
+    JSON.stringify({
+      format: "site-inspection-backup",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      projects: [
+        {
+          id: details.projectId,
+          name: details.projectName,
+          reference: details.projectReference,
+          fictional: false,
+        },
+      ],
+      inspections: [record],
+      templates,
+      photos: [],
+    }),
+  );
+  await saveWorkspace({
+    inspector: { name: "New Name", role: "ARE", company: "WSP" },
+  });
+  await importBackup(
+    new Blob([await zip.generateAsync({ type: "arraybuffer" })]),
+  );
+  expect(await db.inspections.get(record.id)).toEqual(record);
+  expect((await db.inspections.get(record.id))?.company).toBeUndefined();
+  expect((await loadWorkspace()).inspector?.name).toBe("New Name");
 });
