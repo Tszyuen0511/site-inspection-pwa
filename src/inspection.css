@@ -656,6 +656,10 @@ textarea::placeholder {
     grid-row: 2;
     flex-wrap: nowrap;
   }
+  /* The photo remark sits on its own row beneath the caption. */
+  .inline-caption.inline-remark {
+    grid-row: 3;
+  }
   .inline-photos {
     display: contents;
   }

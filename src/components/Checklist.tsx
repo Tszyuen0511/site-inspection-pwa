@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Check, Download, FileText, Plus, RotateCcw } from "lucide-react";
 import {
+  displayNo,
   progress,
   type Inspection,
-  type Photo,
+  type PhotoView,
   type Response,
 } from "../domain";
 import { Button, Dialog, Field, StatusBadge } from "./ui";
@@ -24,7 +25,7 @@ export function Checklist({
   run,
 }: {
   record: Inspection;
-  photos: Photo[];
+  photos: PhotoView[];
   onChange: (r: Inspection) => void;
   onPhotos: (item: string) => void;
   onComplete: () => void;
@@ -347,7 +348,8 @@ export function Checklist({
               Sign-off
             </h2>
             <p>
-              {p.done} of {p.total} items recorded · Revision {record.revision}
+              {displayNo(record)} · {p.done} of {p.total} items recorded ·
+              Revision {record.revision}
             </p>
             <p className="muted small">
               Completion records your observations and does not represent formal

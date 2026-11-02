@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
-import type { Inspection, Project, StoredPhoto } from "../domain";
+import {
+  displayNo,
+  type Inspection,
+  type PhotoView,
+  type Project,
+} from "../domain";
+import { listPhotoViews } from "../photos";
 import { Button, Field, StatusBadge } from "./ui";
 import { ReportTemplates } from "./ReportTemplates";
-function Thumb({ photo, onOpen }: { photo: StoredPhoto; onOpen: () => void }) {
+function Thumb({ photo, onOpen }: { photo: PhotoView; onOpen: () => void }) {
   const [url, setURL] = useState("");
   useEffect(() => {
-    const url = URL.createObjectURL(
-      new Blob([photo.compressed], { type: "image/jpeg" }),
-    );
+    const url = URL.createObjectURL(photo.compressed);
     setURL(url);
     return () => URL.revokeObjectURL(url);
   }, [photo.compressed]);
@@ -35,10 +39,12 @@ function Gallery({
   const photos = useLiveQuery(
     () =>
       open
-        ? db.photos.where("inspectionId").equals(record.id).sortBy("order")
-        : Promise.resolve([] as StoredPhoto[]),
+        ? listPhotoViews(record.id).then((rows) =>
+            rows.sort((a, b) => a.order - b.order),
+          )
+        : Promise.resolve([] as PhotoView[]),
     [record.id, open],
-    [] as StoredPhoto[],
+    [] as PhotoView[],
   );
   const [caption, setCaption] = useState("");
   const matching = photos.filter((p) =>
@@ -102,7 +108,7 @@ function ArchiveCard({
             {record.date} · {count} photos · Report No.{" "}
             {record.dailyReport?.reportNumber || "Not assigned"}
           </p>
-          <small className="library-id">{record.id}</small>
+          <small className="library-id">{displayNo(record)}</small>
         </div>
         <StatusBadge status={record.status} />
       </div>

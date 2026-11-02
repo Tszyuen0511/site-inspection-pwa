@@ -8,8 +8,13 @@ import {
   safeName,
   type Inspection,
   type Photo,
+  type PhotoMeta,
 } from "./domain";
-export function verifyPhotos(record: Inspection, photos: Photo[]) {
+export function verifyPhotos(
+  record: Inspection,
+  photos: PhotoMeta[],
+  requireOriginal = false,
+) {
   for (const p of photos) {
     if (
       p.inspectionId !== record.id ||
@@ -18,7 +23,10 @@ export function verifyPhotos(record: Inspection, photos: Photo[]) {
       throw new Error(
         "A photo has an invalid inspection or checklist association.",
       );
-    if (!p.original?.size || !p.compressed?.size)
+    if (
+      !p.compressed?.size ||
+      (requireOriginal && !(p as Photo).original?.size)
+    )
       throw new Error(
         `Photo ${p.name} is missing its stored image. Restore a backup or remove the missing photo.`,
       );
@@ -30,6 +38,7 @@ export function photoMetadata(photos: Photo[]) {
     inspectionId: p.inspectionId,
     itemId: p.itemId,
     caption: p.caption,
+    remark: p.remark || "",
     order: i,
     number: photoNumber(i),
     name: p.name,
@@ -44,12 +53,21 @@ export function photoMetadata(photos: Photo[]) {
 }
 export async function generatePDF(
   record: Inspection,
-  photos: Photo[],
+  photos: PhotoMeta[],
   fontBase64?: string,
 ): Promise<Blob> {
   verifyPhotos(record, photos);
   const content =
-    JSON.stringify(record) + JSON.stringify(photoMetadata(photos));
+    JSON.stringify(record) +
+    JSON.stringify(
+      photos.map((p) => [
+        p.name,
+        p.caption,
+        p.remark,
+        p.reportGroup,
+        p.reportSection,
+      ]),
+    );
   if (!fontBase64 && /[^\u0000-\u00ff]/.test(content))
     throw new Error(
       "This report contains characters outside the default Latin font. Add a compatible Unicode .ttf report font in Settings, then retry. JSON and backups preserve all text.",
@@ -61,6 +79,7 @@ export async function generatePackage(
   photos: Photo[],
   font?: string,
 ) {
+  verifyPhotos(record, photos, true);
   const pdf = await generatePDF(record, photos, font);
   const zip = new JSZip();
   const folder = zip.folder(packageName(record))!;

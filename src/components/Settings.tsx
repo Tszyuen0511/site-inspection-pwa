@@ -15,9 +15,23 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { db, deleteProject } from "../db";
-import { createBackup, importBackup } from "../backup";
-import { download } from "../export";
+import {
+  db,
+  deleteProject,
+  findRemovableDemoData,
+  removeDemoData,
+} from "../db";
+import { useLiveQuery } from "dexie-react-hooks";
+import { importBackupDetailed } from "../backup";
+import { exportBackupFiles, type BackupOutcome } from "../backup-export";
+import type { BackupLog } from "../storage-health";
+import { ensurePersistence, type Persistence } from "../storage-health";
+import type { IntegrityIssue } from "../integrity";
+import {
+  BackupPartsDialog,
+  IntegrityList,
+  RecoveryButton,
+} from "./StorageNotices";
 import {
   localDate,
   projectSchema,
@@ -28,6 +42,11 @@ import {
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { Button, Dialog, Field } from "./ui";
 export function Settings({
+  onDemoRemoved,
+  onPersistence,
+  issues,
+  integrityOpen,
+  backupLog,
   projects,
   templates,
   theme,
@@ -37,6 +56,11 @@ export function Settings({
   canInstall,
   offlineReady,
 }: {
+  onDemoRemoved: (removedIds: string[]) => void;
+  onPersistence: (p: Persistence) => void;
+  issues: IntegrityIssue[];
+  integrityOpen: boolean;
+  backupLog?: BackupLog;
   projects: Project[];
   templates: Template[];
   theme: string;
@@ -48,12 +72,19 @@ export function Settings({
 }) {
   const [project, setProject] = useState<Partial<Project>>(),
     [deleting, setDeleting] = useState<Project>(),
-    [importFile, setImportFile] = useState<File>(),
+    [importFiles, setImportFiles] = useState<File[]>([]),
+    [backupNote, setBackupNote] = useState(""),
+    [pendingBackup, setPendingBackup] = useState<BackupOutcome["pending"]>(),
+    [demoOpen, setDemoOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [template, setTemplate] = useState<Template>(),
     [templateText, setTemplateText] = useState(""),
     [storage, setStorage] = useState(""),
     [fontName, setFontName] = useState("");
+  const demo = useLiveQuery(findRemovableDemoData, [], {
+    records: [] as string[],
+    projects: [] as string[],
+  });
   const backupInput = useRef<HTMLInputElement>(null),
     fontInput = useRef<HTMLInputElement>(null);
   const job = async (fn: () => Promise<unknown>, success?: string) => {
@@ -147,14 +178,16 @@ export function Settings({
                 <Button
                   disabled={busy}
                   onClick={() =>
-                    void job(
-                      async () =>
-                        download(
-                          await createBackup(),
-                          `Site_Inspection_Backup_${localDate()}_${Date.now()}.zip`,
-                        ),
-                      "Local backup downloaded.",
-                    )
+                    void job(async () => {
+                      const outcome = await exportBackupFiles();
+                      if (outcome.pending) setPendingBackup(outcome.pending);
+                      setBackupNote(
+                        outcome.message +
+                          outcome.excluded
+                            .map((i) => `\n- ${i.kind} ${i.id}: ${i.message}`)
+                            .join(""),
+                      );
+                    })
                   }
                 >
                   <Download size={16} />
@@ -174,12 +207,27 @@ export function Settings({
                 type="file"
                 accept=".zip,application/zip"
                 aria-label="Choose backup"
+                multiple
                 hidden
                 onChange={(e) => {
-                  setImportFile(e.target.files?.[0]);
+                  setImportFiles(Array.from(e.target.files ?? []));
                   e.target.value = "";
                 }}
               />
+              <p className="small muted" role="status">
+                {backupLog
+                  ? `Last backup exported: ${new Date(backupLog.at).toLocaleString()} (${backupLog.inspectionCount} inspections). The app cannot confirm where the file was saved.`
+                  : "No backup has been exported from this device yet."}
+              </p>
+              {backupNote && (
+                <p
+                  className="small"
+                  role="status"
+                  style={{ whiteSpace: "pre-wrap" }}
+                >
+                  {backupNote}
+                </p>
+              )}
               <p className="small muted">
                 Imports are validated before saving. Conflicting inspection IDs
                 are rejected, preserving existing local work. Inspection
@@ -211,11 +259,12 @@ export function Settings({
                 size="sm"
                 onClick={() =>
                   void run(async () => {
-                    const result = await navigator.storage?.persist?.();
+                    const result = await ensurePersistence();
+                    onPersistence(result);
                     setStorage(
-                      result
+                      result === "granted"
                         ? "Persistent storage granted. Continue to keep backups."
-                        : "Persistent storage was not granted or is unsupported. Keep regular backups.",
+                        : "Persistent storage was not granted or is unsupported. Your browser may clear this app's data; keep regular backups outside the browser.",
                     );
                   })
                 }
@@ -227,6 +276,61 @@ export function Settings({
                   {storage}
                 </p>
               )}
+            </div>
+          </section>
+          {(demo.records.length > 0 || demo.projects.length > 0) && (
+            <section className="card settings-section" id="demo-data">
+              <div className="card-header">
+                <div>
+                  <h2>Demonstration data</h2>
+                  <p>
+                    Fictional starter records are still on this device (
+                    {demo.records.length} inspection
+                    {demo.records.length === 1 ? "" : "s"},{" "}
+                    {demo.projects.length} project
+                    {demo.projects.length === 1 ? "" : "s"}).
+                  </p>
+                </div>
+              </div>
+              <div className="settings-body">
+                <p className="small muted">
+                  Only records that are still exactly as supplied are removed.
+                  Anything you edited, anything with photographs, and anything
+                  you filed under a demonstration project is kept.
+                </p>
+                <Button variant="outline" onClick={() => setDemoOpen(true)}>
+                  Remove demonstration data
+                </Button>
+              </div>
+            </section>
+          )}
+          <section className="card settings-section" id="data-integrity">
+            <div className="card-header">
+              <div>
+                <h2>Data integrity</h2>
+                <p>
+                  Stored items that fail validation are kept unchanged, never
+                  deleted.
+                </p>
+              </div>
+            </div>
+            <div className="settings-body">
+              {issues.length ? (
+                <>
+                  <div className="notice warning" role="alert">
+                    {issues.length} stored item{issues.length === 1 ? "" : "s"}{" "}
+                    failed validation. {integrityOpen ? "" : "Details below."}
+                  </div>
+                  <IntegrityList issues={issues} />
+                </>
+              ) : (
+                <p className="small muted">No validation problems found.</p>
+              )}
+              <RecoveryButton onResult={setBackupNote} />
+              <p className="small muted">
+                Recovery data is an unvalidated raw copy for support and manual
+                recovery. It is not a backup and cannot be imported.
+              </p>
             </div>
           </section>
           <section className="card settings-section">
@@ -522,18 +626,56 @@ export function Settings({
           </Button>
         </div>
       </Dialog>
+      <BackupPartsDialog
+        pending={pendingBackup}
+        onClose={(message) => {
+          setPendingBackup(undefined);
+          setBackupNote(message);
+        }}
+      />
       <Dialog
-        open={!!importFile}
-        onOpenChange={(v) => !v && setImportFile(undefined)}
+        open={demoOpen}
+        onOpenChange={setDemoOpen}
+        title="Remove demonstration data?"
+        description={`This permanently removes ${demo.records.length} unchanged fictional inspection(s) and ${demo.projects.length} fictional project(s). Your own records are not touched. Export a backup first if you are unsure.`}
+      >
+        <div className="form-actions">
+          <Button variant="outline" onClick={() => setDemoOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() =>
+              void job(async () => {
+                const r = await removeDemoData();
+                onDemoRemoved(r.removedIds);
+                setDemoOpen(false);
+                setBackupNote(
+                  `Removed ${r.inspections} demonstration inspection(s) and ${r.projects} project(s).`,
+                );
+              })
+            }
+          >
+            Remove demonstration data
+          </Button>
+        </div>
+      </Dialog>
+      <Dialog
+        open={importFiles.length > 0}
+        onOpenChange={(v) => !v && setImportFiles([])}
         title="Import local backup"
         description="This adds validated records and photos. Untouched fictional starter records may be replaced. Conflicts with your own records are rejected without partial changes. Inspector profile and defaults are restored only when this device has no saved workspace settings."
       >
-        <p>{importFile?.name}</p>
+        <ul>
+          {importFiles.map((f) => (
+            <li key={f.name}>{f.name}</li>
+          ))}
+        </ul>
         <div className="form-actions">
           <Button
             disabled={busy}
             variant="outline"
-            onClick={() => setImportFile(undefined)}
+            onClick={() => setImportFiles([])}
           >
             Cancel
           </Button>
@@ -541,9 +683,44 @@ export function Settings({
             disabled={busy}
             onClick={() =>
               void job(async () => {
-                const n = await importBackup(importFile!);
-                setImportFile(undefined);
-                return n;
+                // Each file is atomic; stop at the first failure and say what was restored.
+                const done: string[] = [];
+                let total = 0;
+                const conflicts: string[] = [];
+                const seen = new Map<string, { n: number; of: number }>();
+                try {
+                  for (const file of [...importFiles].sort((a, b) =>
+                    a.name.localeCompare(b.name),
+                  )) {
+                    const r = await importBackupDetailed(file);
+                    total += r.inspections;
+                    conflicts.push(...r.numberConflicts);
+                    done.push(file.name);
+                    if (r.volume) {
+                      const v = seen.get(r.volume.id) ?? {
+                        n: 0,
+                        of: r.volume.total,
+                      };
+                      seen.set(r.volume.id, { n: v.n + 1, of: v.of });
+                    }
+                  }
+                } catch (error) {
+                  setImportFiles([]);
+                  throw new Error(
+                    `${error instanceof Error ? error.message : String(error)}${done.length ? ` Already restored: ${done.join(", ")}.` : ""}`,
+                  );
+                }
+                setImportFiles([]);
+                const missing = [...seen.values()].filter((v) => v.n < v.of);
+                const dupes = conflicts.length
+                  ? ` Note: ${[...new Set(conflicts)].join(", ")} already existed on this device for the same project; both records were kept with the same number.`
+                  : "";
+                setBackupNote(
+                  (missing.length
+                    ? `Restored ${total} inspections, but this backup has ${missing[0].of} files and only ${missing[0].n} were selected. Import the remaining part(s) too.`
+                    : `Restored ${total} inspection${total === 1 ? "" : "s"} from ${done.length} file${done.length === 1 ? "" : "s"}.`) +
+                    dupes,
+                );
               }, "Backup imported successfully.")
             }
           >

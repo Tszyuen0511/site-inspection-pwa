@@ -87,6 +87,8 @@ export type Details = z.infer<typeof detailsSchema>;
 export const inspectionSchema = detailsSchema.extend({
   id: required,
   status: z.enum(["Draft", "Completed", "Exported"]),
+  /** Human-readable number, e.g. INSP-SP-001. Absent on records created before numbering. */
+  inspectionNo: z.string().trim().min(1).max(50).optional(),
   createdAt: required,
   updatedAt: required,
   revision: z.number().int().min(0),
@@ -132,7 +134,13 @@ export interface Photo {
   createdAt: string;
   reportSection?: "site" | "core" | "plan";
   reportGroup?: string;
+  /** Observation about this specific photograph (distinct from its caption). */
+  remark?: string;
 }
+/** Everything about a photograph except the full-size original. */
+export type PhotoMeta = Omit<Photo, "original">;
+/** Used by screens: report image plus the original's size, never its bytes. */
+export type PhotoView = PhotoMeta & { originalSize: number };
 export type StoredPhoto = Omit<Photo, "original" | "compressed"> & {
   original: ArrayBuffer;
   compressed: ArrayBuffer;
@@ -169,6 +177,28 @@ export function newInspection(
     fictional: false,
   };
 }
+/**
+ * Two-to-four letter code for an inspection type, from its template name:
+ * "Sheet Pile" -> "SP", "Bored Pile" -> "BP", "Pipe Pile" -> "PP".
+ */
+export function inspectionCode(typeName: string) {
+  const words = typeName
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean);
+  const code =
+    words.length > 1
+      ? words.map((w) => w[0]).join("")
+      : (words[0] || "").slice(0, 2);
+  return code.slice(0, 4) || "GEN";
+}
+export const formatInspectionNo = (code: string, n: number) =>
+  `INSP-${code}-${String(n).padStart(3, "0")}`;
+/** The number shown everywhere; older records keep showing their original ID. */
+export const displayNo = (r: Pick<Inspection, "id" | "inspectionNo">) =>
+  r.inspectionNo || r.id;
 export function validationIssues(record: Inspection): string[] {
   const result = detailsSchema.safeParse(record);
   const issues = result.success
@@ -208,11 +238,12 @@ export function safeName(value: string) {
   );
 }
 export function packageName(r: Inspection) {
+  // Uses the displayed number so file names match the report; legacy records keep their ID.
   return [
     safeName(r.projectReference).slice(0, 32),
     safeName(r.element).slice(0, 32),
     r.date,
-    safeName(r.id),
+    safeName(displayNo(r)),
   ].join("_");
 }
 export function photoNumber(index: number) {

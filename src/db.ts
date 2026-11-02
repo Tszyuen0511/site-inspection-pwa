@@ -4,6 +4,8 @@ import {
   newInspection,
   templates,
   validationIssues,
+  formatInspectionNo,
+  inspectionCode,
   type Inspection,
   type StoredPhoto,
   type Project,
@@ -61,6 +63,7 @@ export async function seed() {
         ["PP-006", "Pipe Pile", "Draft", "2026-10-28"],
       ] as const;
       const fingerprints: Record<string, string> = {};
+      const counters: Record<string, number> = {};
       for (const [n, spec] of specs.entries()) {
         const [element, type, status, date] = spec,
           project = projects[n === 4 ? 1 : 0],
@@ -87,6 +90,10 @@ export async function seed() {
           template,
         );
         record.id = `INSP-DEMO-${String(n + 1).padStart(4, "0")}`;
+        const code = inspectionCode(type),
+          scope = `${project.id}:${code}`;
+        counters[scope] = (counters[scope] || 0) + 1;
+        record.inspectionNo = formatInspectionNo(code, counters[scope]);
         record.status = status;
         record.fictional = true;
         record.updatedAt = `${date}T09:30:00.000Z`;
@@ -129,6 +136,119 @@ export async function seed() {
     },
   );
 }
+const parseMap = (raw?: string) => {
+  try {
+    return JSON.parse(raw || "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+};
+/**
+ * Only demonstration records that are still byte-for-byte what was seeded, with no
+ * photographs, qualify. Anything the user edited, or any real work filed under a
+ * demonstration project, is never touched.
+ */
+async function removableDemo() {
+  const seeded = parseMap((await db.meta.get("seedRecords"))?.value);
+  const records: string[] = [];
+  for (const [id, fingerprint] of Object.entries(seeded)) {
+    const row = await db.inspections.get(id);
+    if (
+      row &&
+      JSON.stringify(row) === fingerprint &&
+      !(await db.photos.where("inspectionId").equals(id).count())
+    )
+      records.push(id);
+  }
+  const seededProjects = parseMap((await db.meta.get("seedProjects"))?.value);
+  const projects: string[] = [];
+  for (const [id, fingerprint] of Object.entries(seededProjects)) {
+    const row = await db.projects.get(id);
+    if (!row || JSON.stringify(row) !== fingerprint) continue;
+    const users = await db.inspections
+      .where("projectId")
+      .equals(id)
+      .primaryKeys();
+    if (users.every((k) => records.includes(String(k)))) projects.push(id);
+  }
+  return { records, projects };
+}
+export async function findRemovableDemoData() {
+  return db.transaction(
+    "r",
+    [db.projects, db.inspections, db.photos, db.meta],
+    removableDemo,
+  );
+}
+export async function removeDemoData() {
+  return db.transaction(
+    "rw",
+    [db.projects, db.inspections, db.photos, db.meta],
+    async () => {
+      const { records, projects } = await removableDemo();
+      await db.inspections.bulkDelete(records);
+      await db.projects.bulkDelete(projects);
+      const workspace = await loadWorkspace();
+      if (
+        workspace.defaultProjectId &&
+        projects.includes(workspace.defaultProjectId)
+      ) {
+        delete workspace.defaultProjectId;
+        await saveWorkspace(workspace);
+      }
+      return {
+        inspections: records.length,
+        projects: projects.length,
+        removedIds: records,
+      };
+    },
+  );
+}
+const seqKey = (projectId: string, code: string) =>
+  `inspection-seq:${projectId}:${code}`;
+/**
+ * Reserves the next inspection number for a project and type. The highest number
+ * ever issued is kept in meta, so a number is never handed out twice on this
+ * device, even after the record that held it is deleted. Must run inside a
+ * read-write transaction on inspections + meta.
+ */
+async function reserveNumber(projectId: string, typeName: string) {
+  const code = inspectionCode(typeName);
+  const pattern = new RegExp(`^INSP-${code}-(\\d+)$`);
+  let max = Number((await db.meta.get(seqKey(projectId, code)))?.value) || 0;
+  await db.inspections
+    .where("projectId")
+    .equals(projectId)
+    .each((r) => {
+      const m = pattern.exec(r.inspectionNo || "");
+      if (m) max = Math.max(max, Number(m[1]));
+    });
+  await db.meta.put({ key: seqKey(projectId, code), value: String(max + 1) });
+  return formatInspectionNo(code, max + 1);
+}
+/** Adds a new inspection with the next number for its project and type. */
+export async function addNumberedInspection(record: Inspection) {
+  return db.transaction("rw", db.inspections, db.meta, async () => {
+    const numbered = {
+      ...record,
+      inspectionNo: await reserveNumber(
+        record.projectId,
+        record.template.name || record.type,
+      ),
+    };
+    await db.inspections.add(numbered);
+    return numbered;
+  });
+}
+/**
+ * Numbers are per project, so a draft moved to another project gets the next
+ * number there. Only used for that explicit user action; never automatic.
+ */
+export async function numberForProject(record: Inspection, projectId: string) {
+  return db.transaction("rw", db.inspections, db.meta, () =>
+    reserveNumber(projectId, record.template.name || record.type),
+  );
+}
 export async function deleteInspection(id: string) {
   await db.transaction("rw", db.inspections, db.photos, async () => {
     await db.photos.where("inspectionId").equals(id).delete();
@@ -158,20 +278,83 @@ export async function repeatInspection(source: Inspection) {
     source.template,
   );
   record.fictional = source.fictional;
-  await db.inspections.add(record);
-  return record;
+  return addNumberedInspection(record);
 }
+// Never throws on a damaged workspace row: the app must still open so the user can
+// recover. The row itself is left untouched and reported by scanStoredData().
 export async function loadWorkspace(): Promise<Workspace> {
   const row = await db.meta.get("workspace");
-  return row ? workspaceSchema.parse(JSON.parse(row.value)) : {};
+  if (!row) return {};
+  try {
+    return workspaceSchema.parse(JSON.parse(row.value));
+  } catch {
+    return {};
+  }
 }
+export const quarantineKey = (key: string, at = new Date()) =>
+  `quarantine:${key}:${at.toISOString()}`;
+// Call inside a read-write meta transaction before replacing a row that no longer
+// validates, so the raw value is never destroyed by a normal save.
+export async function preserveIfInvalid(
+  key: string,
+  isValid: (raw: string) => boolean,
+) {
+  const existing = await db.meta.get(key);
+  if (existing && !isValid(existing.value))
+    await db.meta.put({ key: quarantineKey(key), value: existing.value });
+}
+const validWorkspace = (raw: string) => {
+  try {
+    workspaceSchema.parse(JSON.parse(raw));
+    return true;
+  } catch {
+    return false;
+  }
+};
 export async function saveWorkspace(value: Workspace) {
-  await db.meta.put({
-    key: "workspace",
-    value: JSON.stringify(workspaceSchema.parse(value)),
+  const parsed = workspaceSchema.parse(value);
+  await db.transaction("rw", db.meta, async () => {
+    await preserveIfInvalid("workspace", validWorkspace);
+    await db.meta.put({ key: "workspace", value: JSON.stringify(parsed) });
   });
 }
-export async function finalize(record: Inspection) {
+// Order-independent fingerprint of an inspection, ignoring updatedAt. Photo edits
+// only bump updatedAt, so they never look like a competing edit.
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, v]) => v !== undefined)
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([k, v]) => [k, stable(v)]),
+    );
+  return value;
+}
+export const inspectionContentKey = (record: Inspection) => {
+  const { updatedAt: _updatedAt, ...rest } = record;
+  void _updatedAt;
+  return JSON.stringify(stable(rest));
+};
+export class SaveConflictError extends Error {
+  name = "SaveConflictError";
+}
+/**
+ * Saves only if the stored inspection still has the content this editor last saw
+ * or loaded. Otherwise nothing is written, so another tab's edits are never
+ * silently overwritten.
+ */
+export async function saveIfUnchanged(snapshot: Inspection, baseKey: string) {
+  await db.transaction("rw", db.inspections, async () => {
+    const current = await db.inspections.get(snapshot.id);
+    if (!current || inspectionContentKey(current) !== baseKey)
+      throw new SaveConflictError(
+        "This inspection was changed or deleted in another tab or window.",
+      );
+    await db.inspections.put(snapshot);
+  });
+}
+export async function finalize(record: Inspection, baseKey?: string) {
   const issues = validationIssues(record);
   if (issues.length) throw new Error(issues.join("\n"));
   const completed = {
@@ -179,7 +362,8 @@ export async function finalize(record: Inspection) {
     status: "Completed" as const,
     updatedAt: new Date().toISOString(),
   };
-  await db.inspections.put(completed);
+  if (baseKey === undefined) await db.inspections.put(completed);
+  else await saveIfUnchanged(completed, baseKey);
   return completed;
 }
 export async function deleteProject(id: string) {
