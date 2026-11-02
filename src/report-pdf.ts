@@ -1,5 +1,5 @@
 import { wspLogo, wspLogoRatio } from "./brand-assets";
-import { gpsText, weatherText } from "./environment";
+import { gpsText } from "./environment";
 import { jsPDF } from "jspdf";
 import { dailyReportDefaults, reportDate } from "./daily-report";
 import { photoNumber, type Inspection, type Photo } from "./domain";
@@ -338,7 +338,7 @@ export async function renderInspectionReport(
     {
       number: 5,
       title: "Weather",
-      body: `5.1   Observed site weather (manual): ${daily.weather || "Not recorded"}\n${weatherText(record.weatherSnapshot)}`,
+      body: `5.1   ${daily.weather.trim() || (record.weatherSnapshot ? `${record.weatherSnapshot.summary}, ${record.weatherSnapshot.temperatureC} C` : "Not recorded")}`,
     },
   );
   paired(
@@ -638,6 +638,15 @@ export async function renderInspectionReport(
       .slice(0, 2)
       .forEach((line, i) => text(line, left, 282 + i * 2.8, 7));
     text(String(page), right, 282, 8, false, "right");
+    if (page === 1 && record.weatherSnapshot && !daily.weather.trim()) {
+      setFont(6.2);
+      doc.textWithLink("Forecast summary: MET Norway", left, 286, {
+        url: "https://www.met.no/",
+      });
+      doc.textWithLink("CC BY 4.0", left + 36, 286, {
+        url: "https://creativecommons.org/licenses/by/4.0/",
+      });
+    }
     text(
       `${record.id} | Rev. ${record.revision} | ${record.status}`,
       left,

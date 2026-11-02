@@ -173,3 +173,5 @@ Backup version 3 and inspection-package schema version 2 preserve GPS/weather fi
 The unmodified official red WSP PNG is embedded locally in src/brand-assets.ts for the interface and PDF. Source: https://www.wsp.com/en-nz/legal/wsp-logo and https://www.wsp.com/-/media/who-we-are/global/image/wsp-logo/img-png-wsp-red.png . The logo remains WSP's trademark; colour, components and aspect ratio are preserved.
 
 The GPS snapshot also preserves the raw device timestamp and interpreted units. The observed WebKit microsecond timestamp anomaly is normalized only if division by 1000 places the sample within five minutes of the current clock; invalid values are rejected rather than replaced with the current time. Normalized samples are explicitly labelled.
+
+PDF section 5 prints only manual site-weather text when supplied, otherwise the saved condition summary and temperature (for example, `partlycloudy day, 30.3 C`). A compact linked MET Norway/CC BY credit appears in the first-page footer when forecast data is used. Full forecast provenance remains in the local record, app details, JSON exports and backups.

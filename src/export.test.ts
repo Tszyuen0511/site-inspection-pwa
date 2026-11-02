@@ -163,7 +163,7 @@ describe("local reports and export", () => {
   });
 });
 
-it("includes GPS and stored forecast provenance alongside manual observations", async () => {
+it("prints concise weather with manual precedence and preserves forecast provenance in JSON", async () => {
   const r = fixture();
   r.gps = {
     latitude: 22.3,
@@ -192,7 +192,20 @@ it("includes GPS and stored forecast provenance alongside manual observations", 
     .map((m) => m[1])
     .join(" ");
   expect(pdfLines.includes("Observed drizzle on site")).toBe(true);
-  expect(text.includes("MET Norway")).toBe(true);
+  expect(text.includes("MET Norway")).toBe(false);
   expect(text.includes("22.300000")).toBe(true);
-  expect(text.includes("2026-11-02T02:05:00.000Z")).toBe(true);
+  expect(text.includes("2026-11-02T02:05:00.000Z")).toBe(false);
+  r.dailyReport.weather = "";
+  const compact = await (await generatePDF(r, [])).text();
+  expect(compact.includes("cloudy, 25 C")).toBe(true);
+  expect(compact.includes("Forecast summary: MET Norway")).toBe(true);
+  expect(compact.includes("humidity")).toBe(false);
+  expect(compact.includes("retrieved:")).toBe(false);
+  const zip = await JSZip.loadAsync(
+    await (await generatePackage(r, [])).arrayBuffer(),
+  );
+  const data = JSON.parse(
+    await zip.file(packageName(r) + "/Inspection_Data.json")!.async("string"),
+  );
+  expect(data.inspection.weatherSnapshot).toEqual(r.weatherSnapshot);
 });
