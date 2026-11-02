@@ -2,14 +2,19 @@ import { wspLogo, wspLogoRatio } from "./brand-assets";
 import { gpsText } from "./environment";
 import { jsPDF } from "jspdf";
 import { dailyReportDefaults, reportDate } from "./daily-report";
-import { photoNumber, type Inspection, type Photo } from "./domain";
+import {
+  photoNumber,
+  type Inspection,
+  type Photo,
+  type PhotoMeta,
+} from "./domain";
 import { orderedPhotos } from "./photos";
 
 // A4 daily-site-report layout. The reference is a layout guide only: no project,
 // corporate marks, personnel, photographs, criteria or approvals are copied.
 export async function renderInspectionReport(
   record: Inspection,
-  photos: Photo[],
+  photos: PhotoMeta[],
   fontBase64?: string,
 ): Promise<Blob> {
   const daily = dailyReportDefaults(record),
@@ -426,7 +431,11 @@ export async function renderInspectionReport(
   const sorted = orderedPhotos(photos),
     numbers = new Map(sorted.map((photo, index) => [photo.id, index]));
   const captionNotes: { label: string; caption: string }[] = [];
-  const photoGrid = async (images: Photo[], number: number, title: string) => {
+  const photoGrid = async (
+    images: PhotoMeta[],
+    number: number,
+    title: string,
+  ) => {
     const start = () => {
       newPage(`${number}.   ${title}`);
     };
@@ -516,7 +525,7 @@ export async function renderInspectionReport(
   let nextSection = 13;
   const cores = sorted.filter((p) => p.reportSection === "core");
   if (cores.length) {
-    const groups = new Map<string, Photo[]>();
+    const groups = new Map<string, PhotoMeta[]>();
     for (const p of cores) {
       const key = p.reportGroup?.trim() || "Unspecified element";
       groups.set(key, [...(groups.get(key) || []), p]);

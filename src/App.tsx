@@ -31,6 +31,9 @@ import {
   deleteInspection,
   repeatInspection,
   finalize,
+  inspectionContentKey,
+  SaveConflictError,
+  saveIfUnchanged,
   seed,
   loadWorkspace,
 } from "./db";
@@ -71,7 +74,7 @@ import { Settings } from "./components/Settings";
 import { Report } from "./components/Report";
 import { generatePackage, generatePDF, download, loadFont } from "./export";
 import { wspLogo } from "./brand-assets";
-import { fromStoredPhoto } from "./photos";
+import { fromStoredPhoto, listPhotoViews } from "./photos";
 type Page =
   | "dashboard"
   | "records"
@@ -113,10 +116,13 @@ export default function App() {
     [installEvent, setInstallEvent] = useState<InstallEvent>(),
     [lossSuspected, setLossSuspected] = useState(false),
     [persistence, setPersistence] = useState<Persistence>("unsupported"),
-    [integrityOpen, setIntegrityOpen] = useState(false);
+    [integrityOpen, setIntegrityOpen] = useState(false),
+    [conflict, setConflict] = useState(false);
   const activeRef = useRef<Inspection | undefined>(undefined),
     queue = useRef<Promise<unknown>>(Promise.resolve()),
     unsaved = useRef(false),
+    // Content of the stored record this editor last loaded or saved (conflict check).
+    baseKey = useRef(""),
     failedSave = useRef(false),
     failedPhotos = useRef<Array<() => Promise<unknown>>>([]);
   const workspace = useLiveQuery(loadWorkspace, [], {});
@@ -133,12 +139,7 @@ export default function App() {
     backupLog = backupRow?.log,
     initializedRow = useLiveQuery(() => db.meta.get("initialized"), [], null),
     allPhotos = useLiveQuery(
-      async () =>
-        active?.id
-          ? (
-              await db.photos.where("inspectionId").equals(active.id).toArray()
-            ).map(fromStoredPhoto)
-          : [],
+      () => (active?.id ? listPhotoViews(active.id) : []),
       [active?.id],
       [],
     );
@@ -273,6 +274,7 @@ export default function App() {
   };
   const activate = (record: Inspection) => {
     activeRef.current = record;
+    baseKey.current = inspectionContentKey(record);
     setActive(record);
     setSaveState("Saved on device");
   };
@@ -286,7 +288,8 @@ export default function App() {
       .catch(() => {})
       .then(async () => {
         try {
-          await db.inspections.put(snapshot);
+          await saveIfUnchanged(snapshot, baseKey.current);
+          baseKey.current = inspectionContentKey(snapshot);
           failedSave.current = false;
           if (activeRef.current === snapshot) {
             unsaved.current = false;
@@ -297,7 +300,8 @@ export default function App() {
         } catch (error) {
           failedSave.current = true;
           setSaveState("Save failed");
-          setNotice({ message: errorMessage(error), error: true });
+          if (error instanceof SaveConflictError) setConflict(true);
+          else setNotice({ message: errorMessage(error), error: true });
         }
       });
   };
@@ -381,7 +385,12 @@ export default function App() {
           status: "Exported" as const,
           updatedAt: new Date().toISOString(),
         };
-        await db.inspections.put(exported);
+        await saveIfUnchanged(
+          exported,
+          activeRef.current?.id === effective.id
+            ? baseKey.current
+            : inspectionContentKey(effective),
+        );
         if (activeRef.current?.id === effective.id) activate(exported);
       }
     }, "ZIP package generated and download requested.");
@@ -396,9 +405,7 @@ export default function App() {
           ? activeRef.current
           : selected
         : activeRef.current!;
-      const photos = (
-        await db.photos.where("inspectionId").equals(record.id).toArray()
-      ).map(fromStoredPhoto);
+      const photos = await listPhotoViews(record.id);
       download(
         await generatePDF(record, photos, await loadFont()),
         packageName(record) + ".pdf",
@@ -424,9 +431,11 @@ export default function App() {
       stored &&
       current &&
       !unsaved.current &&
-      stored.updatedAt > current.updatedAt
+      (stored.updatedAt > current.updatedAt ||
+        inspectionContentKey(stored) !== baseKey.current)
     ) {
       activeRef.current = stored;
+      baseKey.current = inspectionContentKey(stored);
       setActive(stored);
     }
   }, [records]);
@@ -697,7 +706,73 @@ export default function App() {
             </Button>
           </div>
         )}
-        {(unsaved.current || failedPhotos.current.length > 0) &&
+        {conflict && (
+          <div
+            className="error-banner"
+            role="alert"
+            data-testid="conflict-banner"
+          >
+            This inspection was changed in another tab or window, so your latest
+            edits were not saved. Nothing has been overwritten.
+            <div className="row wrap">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void run(async () => {
+                    await queue.current.catch(() => {});
+                    const fresh = await db.inspections.get(
+                      activeRef.current!.id,
+                    );
+                    unsaved.current = false;
+                    failedSave.current = false;
+                    // The user chose to discard; queued photo writes belong to the old copy.
+                    failedPhotos.current = [];
+                    setConflict(false);
+                    if (fresh) activate(fresh);
+                    else {
+                      // Deleted in another tab: nothing left to load.
+                      activeRef.current = undefined;
+                      setActive(undefined);
+                      setSaveState("Saved on device");
+                      setPage("records");
+                      setNotice({
+                        message:
+                          "This inspection was deleted in another tab or window.",
+                        error: true,
+                      });
+                    }
+                  })
+                }
+              >
+                Load the other version (discard my edits)
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void run(async () => {
+                    const fresh = await db.inspections.get(
+                      activeRef.current!.id,
+                    );
+                    // If it was deleted elsewhere, "keep my version" recreates it.
+                    if (!fresh) await db.inspections.put(activeRef.current!);
+                    baseKey.current = inspectionContentKey(
+                      fresh ?? activeRef.current!,
+                    );
+                    failedSave.current = false;
+                    setConflict(false);
+                    save(activeRef.current!);
+                  })
+                }
+              >
+                Keep my version (overwrite the other)
+              </Button>
+            </div>
+          </div>
+        )}
+        {!conflict &&
+          (unsaved.current || failedPhotos.current.length > 0) &&
           saveState === "Save failed" && (
             <div className="error-banner">
               Your latest changes have not been saved.
@@ -884,7 +959,9 @@ export default function App() {
                   onComplete={() =>
                     void run(async () => {
                       if (!(await flush())) return;
-                      activate(await finalize(activeRef.current!));
+                      activate(
+                        await finalize(activeRef.current!, baseKey.current),
+                      );
                     }, "Inspection completed. This does not represent formal approval.")
                   }
                   onReopen={() =>

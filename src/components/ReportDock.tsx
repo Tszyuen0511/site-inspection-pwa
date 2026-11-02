@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Download, FileText } from "lucide-react";
-import { errorMessage, type Inspection, type Photo } from "../domain";
+import { errorMessage, type Inspection, type PhotoMeta } from "../domain";
 import { generatePDF, loadFont } from "../export";
 import { Button } from "./ui";
 import { PdfPreview } from "./PdfPreview";
@@ -12,7 +12,7 @@ export function ReportDock({
   onPDF,
 }: {
   record: Inspection;
-  photos: Photo[];
+  photos: PhotoMeta[];
   onPreview: () => void;
   onPDF: () => void;
 }) {

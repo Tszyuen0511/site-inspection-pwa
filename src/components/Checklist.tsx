@@ -3,7 +3,7 @@ import { Check, Download, FileText, Plus, RotateCcw } from "lucide-react";
 import {
   progress,
   type Inspection,
-  type Photo,
+  type PhotoView,
   type Response,
 } from "../domain";
 import { Button, Dialog, Field, StatusBadge } from "./ui";
@@ -24,7 +24,7 @@ export function Checklist({
   run,
 }: {
   record: Inspection;
-  photos: Photo[];
+  photos: PhotoView[];
   onChange: (r: Inspection) => void;
   onPhotos: (item: string) => void;
   onComplete: () => void;

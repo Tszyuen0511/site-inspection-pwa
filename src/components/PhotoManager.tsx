@@ -14,6 +14,7 @@ import {
   photoNumber,
   type Inspection,
   type Photo,
+  type PhotoView,
 } from "../domain";
 import { orderedPhotos, preparePhoto, toStoredPhoto } from "../photos";
 import { Button, Dialog, Field } from "./ui";
@@ -30,7 +31,7 @@ export function PhotoImage({
   photo,
   onClick,
 }: {
-  photo: Photo;
+  photo: PhotoView;
   onClick?: () => void;
 }) {
   const url = useBlobURL(photo.compressed);
@@ -52,7 +53,7 @@ function PhotoCard({
   onDelete,
   onPatch,
 }: {
-  photo: Photo;
+  photo: PhotoView;
   index: number;
   total: number;
   record: Inspection;
@@ -134,7 +135,7 @@ function PhotoCard({
         </Field>
         <div className="flex-between">
           <small className="muted">
-            {(photo.original.size / 1024 / 1024).toFixed(1)} MB · Original
+            {(photo.originalSize / 1024 / 1024).toFixed(1)} MB · Original
             retained
           </small>
           {!readonly && (
@@ -180,7 +181,7 @@ export function PhotoManager({
   run,
 }: {
   record: Inspection;
-  photos: Photo[];
+  photos: PhotoView[];
   defaultItem?: string;
   run: (work: () => Promise<unknown>, success?: string) => Promise<void>;
 }) {
@@ -188,7 +189,7 @@ export function PhotoManager({
     camera = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false),
     [preview, setPreview] = useState<string>(),
-    [deleting, setDeleting] = useState<Photo>();
+    [deleting, setDeleting] = useState<PhotoView>();
   const [item, setItem] = useState(defaultItem);
   const sorted = orderedPhotos(photos);
   const current = photos.find((p) => p.id === preview);

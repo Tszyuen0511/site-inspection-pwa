@@ -1,4 +1,33 @@
-import { MAX_PHOTO_SIZE, type Photo, type StoredPhoto } from "./domain";
+import { db } from "./db";
+import {
+  MAX_PHOTO_SIZE,
+  type Photo,
+  type PhotoView,
+  type StoredPhoto,
+} from "./domain";
+/**
+ * Lists an inspection's photographs for display, reading one stored row at a time
+ * and keeping only the report image and the original's size. Full-size originals
+ * are never held in memory together; export and backup read them separately.
+ */
+export async function listPhotoViews(
+  inspectionId: string,
+): Promise<PhotoView[]> {
+  const views: PhotoView[] = [];
+  await db.photos
+    .where("inspectionId")
+    .equals(inspectionId)
+    .each((row) => {
+      const { original, compressed, originalType: _type, ...meta } = row;
+      void _type;
+      views.push({
+        ...meta,
+        originalSize: original?.byteLength ?? 0,
+        compressed: new Blob([compressed], { type: "image/jpeg" }),
+      });
+    });
+  return views;
+}
 export async function toStoredPhoto(photo: Photo): Promise<StoredPhoto> {
   const { original, compressed, ...metadata } = photo;
   return {
@@ -86,7 +115,9 @@ export async function preparePhoto(
     URL.revokeObjectURL(url);
   }
 }
-export function orderedPhotos(photos: Photo[]) {
+export function orderedPhotos<T extends { order: number; id: string }>(
+  photos: T[],
+) {
   return [...photos].sort(
     (a, b) => a.order - b.order || a.id.localeCompare(b.id),
   );

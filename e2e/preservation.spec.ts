@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import JSZip from "jszip";
+import { workspaceNav } from "./navigation";
 import { readFile } from "node:fs/promises";
 
 const DB = "site-inspection-v1";
@@ -137,4 +138,112 @@ test("backup reminder appears for unbacked real work and clears after a verified
   await expect(
     page.getByRole("button", { name: "Export backup now" }),
   ).toHaveCount(0);
+});
+
+test("another tab's edit is never lost when two tabs edit one inspection", async ({
+  page,
+  context,
+}, info) => {
+  await page.goto("./");
+  await overview(page);
+  await page
+    .getByRole("button", { name: "New inspection", exact: true })
+    .first()
+    .click();
+  await page.getByLabel("Element identification *").fill("SP-CONFLICT");
+  await page.getByLabel("Location / chainage *").fill("Conflict zone");
+  await page.getByLabel("Inspector name *").fill("QA Inspector");
+  await page
+    .getByRole("button", { name: "Create inspection", exact: true })
+    .click();
+  const items = page.locator(".checklist-item");
+  await expect(items.first()).toBeVisible();
+  // Tab B opens the same record and records item 1.
+  const other = await context.newPage();
+  await other.goto("./");
+  await overview(other);
+  await workspaceNav(
+    other,
+    info.project.name.startsWith("mobile") ? "Records" : "Inspection records",
+  );
+  await other.getByLabel("Search inspections").fill("SP-CONFLICT");
+  await other
+    .getByRole("button", { name: "Open SP-CONFLICT", exact: true })
+    .click();
+  await other
+    .locator(".checklist-item")
+    .first()
+    .getByRole("button", { name: "Pass", exact: true })
+    .click();
+  await expect(
+    other.getByText("Draft saved on this device", { exact: true }),
+  ).toBeVisible();
+  // Tab A still holds the old copy and edits item 2.
+  await items.nth(1).getByRole("button", { name: "Pass", exact: true }).click();
+  // Either the stale tab already picked up B's edit through the live query and
+  // merges cleanly, or it is blocked with a banner. In every case B's edit survives.
+  await page.waitForTimeout(1500);
+  const banner = page.getByTestId("conflict-banner");
+  const readStatuses = async () => {
+    const stored = (await rawGetAll(page, "inspections")).find(
+      (r) => r.element === "SP-CONFLICT",
+    );
+    return stored.template.items.map(
+      (i: { id: string }) => stored.responses[i.id].status,
+    );
+  };
+  const statuses = await readStatuses();
+  expect(statuses[0]).toBe("Pass");
+  if (await banner.isVisible()) {
+    await expect(banner).toContainText("Nothing has been overwritten");
+    expect(statuses[1]).toBe("Not Inspected");
+    await page
+      .getByRole("button", {
+        name: "Load the other version (discard my edits)",
+      })
+      .click();
+    await expect(banner).toHaveCount(0);
+  } else expect(statuses[1]).toBe("Pass");
+});
+
+test("a save is blocked, not silently overwritten, when the stored record changed behind the editor", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await overview(page);
+  await page
+    .getByRole("button", { name: "New inspection", exact: true })
+    .first()
+    .click();
+  await page.getByLabel("Element identification *").fill("SP-BLOCK");
+  await page.getByLabel("Location / chainage *").fill("Block zone");
+  await page.getByLabel("Inspector name *").fill("QA Inspector");
+  await page
+    .getByRole("button", { name: "Create inspection", exact: true })
+    .click();
+  const items = page.locator(".checklist-item");
+  await expect(items.first()).toBeVisible();
+  const find = async () =>
+    (await rawGetAll(page, "inspections")).find(
+      (r) => r.element === "SP-BLOCK",
+    );
+  const status = (r: any, n: number) =>
+    r.responses[r.template.items[n].id].status;
+  // Another writer changes the stored record. Raw IndexedDB writes are not seen by
+  // the live query, so this editor is genuinely stale.
+  const other = await find();
+  other.responses[other.template.items[0].id].status = "Pass";
+  other.updatedAt = new Date().toISOString();
+  await rawPut(page, "inspections", other);
+  await items.nth(1).getByRole("button", { name: "Pass", exact: true }).click();
+  const banner = page.getByTestId("conflict-banner");
+  await expect(banner).toContainText("Nothing has been overwritten");
+  const blocked = await find();
+  expect(status(blocked, 0)).toBe("Pass");
+  expect(status(blocked, 1)).toBe("Not Inspected");
+  await page
+    .getByRole("button", { name: "Keep my version (overwrite the other)" })
+    .click();
+  await expect(banner).toHaveCount(0);
+  await expect.poll(async () => status(await find(), 1)).toBe("Pass");
 });

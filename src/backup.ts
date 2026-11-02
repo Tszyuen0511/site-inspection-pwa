@@ -61,6 +61,27 @@ export interface ParsedBackup {
   photos: StoredPhoto[];
 }
 const utf8Size = (text: string) => new Blob([text]).size;
+// jsPDF detects the image format from the bytes, so a file named .jpg but holding
+// another format (or a decoder-bomb GIF/BMP) must never reach PDF generation.
+export function imageMatches(bytes: ArrayBuffer | Uint8Array, type: string) {
+  const b =
+    bytes instanceof Uint8Array
+      ? bytes
+      : new Uint8Array(bytes, 0, Math.min(12, bytes.byteLength));
+  const at = (i: number) => b[i];
+  if (type === "image/jpeg")
+    return at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff;
+  if (type === "image/png")
+    return [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every(
+      (v, i) => at(i) === v,
+    );
+  if (type === "image/webp")
+    return (
+      String.fromCharCode(at(0), at(1), at(2), at(3)) === "RIFF" &&
+      String.fromCharCode(at(8), at(9), at(10), at(11)) === "WEBP"
+    );
+  return false;
+}
 const SLACK = (max: number) => Math.min(1024 * 1024, Math.floor(max * 0.05));
 function relationIssue(
   r: BackupData["inspections"][number],
@@ -142,6 +163,10 @@ export async function readBackup(
       jpg = await compressed.async("uint8array");
     if (raw.length !== p.originalSize || jpg.length !== p.compressedSize)
       throw new Error("Photo size does not match backup metadata.");
+    // Only the report image reaches the PDF library, so only it is checked. An
+    // original is user data and is preserved byte-for-byte whatever its format.
+    if (!imageMatches(jpg, "image/jpeg"))
+      throw new Error(`Backup photo ${p.name} has an invalid report image.`);
     const { originalType, originalSize, compressedSize, ...meta } = p;
     photos.push({
       ...meta,
@@ -351,6 +376,10 @@ export async function createBackupVolumes(
           };
           if (!usable(row)) {
             reject("its image data is missing or damaged");
+            continue;
+          }
+          if (!imageMatches(row.compressed, "image/jpeg")) {
+            reject("its report image is not a valid JPEG");
             continue;
           }
           const { original, compressed, ...p } = fromStoredPhoto(row);

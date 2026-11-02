@@ -199,7 +199,43 @@ export async function saveWorkspace(value: Workspace) {
     await db.meta.put({ key: "workspace", value: JSON.stringify(parsed) });
   });
 }
-export async function finalize(record: Inspection) {
+// Order-independent fingerprint of an inspection, ignoring updatedAt. Photo edits
+// only bump updatedAt, so they never look like a competing edit.
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, v]) => v !== undefined)
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([k, v]) => [k, stable(v)]),
+    );
+  return value;
+}
+export const inspectionContentKey = (record: Inspection) => {
+  const { updatedAt: _updatedAt, ...rest } = record;
+  void _updatedAt;
+  return JSON.stringify(stable(rest));
+};
+export class SaveConflictError extends Error {
+  name = "SaveConflictError";
+}
+/**
+ * Saves only if the stored inspection still has the content this editor last saw
+ * or loaded. Otherwise nothing is written, so another tab's edits are never
+ * silently overwritten.
+ */
+export async function saveIfUnchanged(snapshot: Inspection, baseKey: string) {
+  await db.transaction("rw", db.inspections, async () => {
+    const current = await db.inspections.get(snapshot.id);
+    if (!current || inspectionContentKey(current) !== baseKey)
+      throw new SaveConflictError(
+        "This inspection was changed or deleted in another tab or window.",
+      );
+    await db.inspections.put(snapshot);
+  });
+}
+export async function finalize(record: Inspection, baseKey?: string) {
   const issues = validationIssues(record);
   if (issues.length) throw new Error(issues.join("\n"));
   const completed = {
@@ -207,7 +243,8 @@ export async function finalize(record: Inspection) {
     status: "Completed" as const,
     updatedAt: new Date().toISOString(),
   };
-  await db.inspections.put(completed);
+  if (baseKey === undefined) await db.inspections.put(completed);
+  else await saveIfUnchanged(completed, baseKey);
   return completed;
 }
 export async function deleteProject(id: string) {

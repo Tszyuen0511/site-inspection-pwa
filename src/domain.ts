@@ -133,6 +133,10 @@ export interface Photo {
   reportSection?: "site" | "core" | "plan";
   reportGroup?: string;
 }
+/** Everything about a photograph except the full-size original. */
+export type PhotoMeta = Omit<Photo, "original">;
+/** Used by screens: report image plus the original's size, never its bytes. */
+export type PhotoView = PhotoMeta & { originalSize: number };
 export type StoredPhoto = Omit<Photo, "original" | "compressed"> & {
   original: ArrayBuffer;
   compressed: ArrayBuffer;

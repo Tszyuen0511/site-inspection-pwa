@@ -11,7 +11,7 @@ import {
   errorMessage,
   packageName,
   type Inspection,
-  type Photo,
+  type PhotoMeta,
 } from "../domain";
 import { Button, Dialog, StatusBadge } from "./ui";
 import { download, generatePDF, loadFont } from "../export";
@@ -26,7 +26,7 @@ export function Report({
   onSaveDetails,
 }: {
   record: Inspection;
-  photos: Photo[];
+  photos: PhotoMeta[];
   onExport: () => void;
   onSaveDetails: (details: DailyReport) => Promise<boolean>;
 }) {

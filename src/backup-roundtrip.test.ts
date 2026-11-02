@@ -37,6 +37,7 @@ function noise(size: number, seed: number) {
   }
   out[0] = 0xff;
   out[1] = 0xd8;
+  out[2] = 0xff;
   return out;
 }
 async function addInspection(
@@ -216,6 +217,44 @@ describe("review regressions", () => {
       expect(await expanded(f.blob)).toBeLessThanOrEqual(limit);
       await expect(readBackup(f.blob, limit)).resolves.toBeDefined();
     }
+  });
+  it("rejects a backup whose report image is not a JPEG, and reports such a stored photo", async () => {
+    const { bytes, record } = await addInspection("E", [20 * KB], 1);
+    const [id] = [...bytes.keys()];
+    // Export side: a stored report image that is really a GIF is reported, not packed.
+    const gif = new TextEncoder().encode(
+      "GIF89a\x01\x00\x01\x00 more bytes here",
+    ).buffer;
+    await db.photos.update(id, { compressed: gif } as never);
+    const result = await createBackupVolumes();
+    expect(result.excluded.some((i) => i.kind === "photo" && i.id === id)).toBe(
+      true,
+    );
+    expect(result.excludedInspectionIds).toContain(record.id);
+    // Import side: swap the image inside an otherwise valid backup.
+    await db.photos.update(id, {
+      compressed: bytes.get(id)![1].slice().buffer,
+    } as never);
+    const good = await createBackupVolumes();
+    const zip = await JSZip.loadAsync(await good.files[0].blob.arrayBuffer());
+    const forged = new Uint8Array(bytes.get(id)![1].length);
+    forged.set(new TextEncoder().encode("GIF89a"));
+    zip.file(`photos/${id}/report.jpg`, forged);
+    const blob = await zip.generateAsync({ type: "blob" });
+    await expect(readBackup(blob)).rejects.toThrow("invalid report image");
+  });
+  it("keeps an original whose bytes do not match its declared type (never rejects user photos)", async () => {
+    const { bytes, record } = await addInspection("E", [20 * KB], 1);
+    const [id] = [...bytes.keys()];
+    const png = new Uint8Array(2000);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); // PNG saved as image/jpeg
+    await db.photos.update(id, { original: png.buffer } as never);
+    const result = await createBackupVolumes();
+    expect(result.excluded).toEqual([]);
+    await wipe();
+    expect(await importBackup(result.files[0].blob)).toBe(1);
+    expect(new Uint8Array((await db.photos.get(id))!.original)).toEqual(png);
+    expect(record.id).toBeDefined();
   });
   it("counts hidden invalid inspections as unbacked work", () => {
     expect(backupStatus([], undefined, Date.now(), 1)).toMatchObject({

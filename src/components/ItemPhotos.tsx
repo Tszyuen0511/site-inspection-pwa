@@ -6,6 +6,7 @@ import {
   photoNumber,
   type Inspection,
   type Photo,
+  type PhotoView,
 } from "../domain";
 import { orderedPhotos, preparePhoto, toStoredPhoto } from "../photos";
 import { Button, Dialog, Field } from "./ui";
@@ -20,7 +21,7 @@ export function ItemPhotos({
 }: {
   record: Inspection;
   itemId: string;
-  photos: Photo[];
+  photos: PhotoView[];
   run: (work: () => Promise<unknown>, success?: string) => Promise<void>;
   onManage: () => void;
 }) {
