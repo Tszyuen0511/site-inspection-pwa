@@ -793,3 +793,30 @@ textarea::placeholder {
     bottom: calc(96px + env(safe-area-inset-bottom));
   }
 }
+
+.wsp-logo {
+  display: inline-block;
+  width: 48px;
+  height: auto;
+  padding: 5px;
+  background: #fff;
+  border-radius: 3px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.environment-panel {
+  margin-bottom: 24px;
+}
+.environment-panel .settings-body {
+  padding: 20px;
+}
+.environment-text {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.environment-panel .row {
+  margin: 12px 0;
+}
+.environment-panel .checkbox-label {
+  margin: 16px 0;
+}

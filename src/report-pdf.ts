@@ -1,3 +1,5 @@
+import { wspLogo, wspLogoRatio } from "./brand-assets";
+import { gpsText, weatherText } from "./environment";
 import { jsPDF } from "jspdf";
 import { dailyReportDefaults, reportDate } from "./daily-report";
 import { photoNumber, type Inspection, type Photo } from "./domain";
@@ -61,7 +63,17 @@ export async function renderInspectionReport(
     );
     doc.setFontSize(13);
     doc.setTextColor(45, 45, 45);
-    doc.text("SITE INSPECTION", left, 13);
+    doc.addImage(
+      wspLogo,
+      "PNG",
+      left,
+      7,
+      18,
+      18 / wspLogoRatio,
+      "wsp-logo",
+      "FAST",
+    );
+    doc.text("SITE INSPECTION", left + 24, 13);
   };
   const newPage = (title = "Daily Site Report - continued") => {
     doc.addPage();
@@ -326,7 +338,7 @@ export async function renderInspectionReport(
     {
       number: 5,
       title: "Weather",
-      body: `5.1   ${daily.weather || "Not recorded"}`,
+      body: `5.1   Observed site weather (manual): ${daily.weather || "Not recorded"}\n${weatherText(record.weatherSnapshot)}`,
     },
   );
   paired(
@@ -567,6 +579,7 @@ export async function renderInspectionReport(
     `Inspection date / time: ${record.date} / ${record.time} (recorded local time)\nInspector: ${record.inspector} / ${record.role}${record.company ? `\nCompany: ${record.company}` : ""}\nPrepared by: ${daily.preparedBy || record.inspector}\nProject reference: ${record.projectReference}\nDrawing reference: ${record.drawing || "Not recorded"}\nTemplate: ${record.template.id} / version ${record.template.version}\nCreated: ${record.createdAt}\nUpdated: ${record.updatedAt}`,
     { x: left, width, size: 8.5 },
   );
+  paragraph(gpsText(record.gps), { x: left, width, size: 8.5 });
   const checklist = record.template.items.map((item, index) => {
     const r = record.responses[item.id];
     const known = new Set(item.fields.flatMap((f) => [f.key, f.key + "Unit"]));

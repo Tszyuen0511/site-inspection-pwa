@@ -35,7 +35,7 @@ const metadataSchema = z.object({
 });
 const backupSchema = z.object({
   format: z.literal("site-inspection-backup"),
-  version: z.union([z.literal(1), z.literal(2)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   workspace: workspaceSchema.optional(),
   exportedAt: z.string(),
   projects: z.array(projectSchema).max(10000),
@@ -73,7 +73,7 @@ export async function createBackup(): Promise<Blob> {
     JSON.stringify(
       {
         format: "site-inspection-backup",
-        version: 2,
+        version: 3,
         exportedAt: new Date().toISOString(),
         ...snapshot,
         photos: metadata,

@@ -81,7 +81,7 @@ export async function generatePackage(
   folder.file(
     "Inspection_Data.json",
     JSON.stringify(
-      { schemaVersion: 1, inspection: record, photos: photoEntries },
+      { schemaVersion: 2, inspection: record, photos: photoEntries },
       null,
       2,
     ),

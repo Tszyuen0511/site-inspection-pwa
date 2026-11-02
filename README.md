@@ -1,6 +1,6 @@
 # Site Inspection
 
-A working, local-first inspection PWA for fictional civil / geotechnical fieldwork. React, TypeScript, Vite, Tailwind CSS, shadcn-style Radix UI primitives, Lucide, Dexie / IndexedDB, React Hook Form / Zod, jsPDF and JSZip. No backend, account, external runtime APIs, cloud storage, analytics or telemetry.
+A working, local-first inspection PWA for fictional civil / geotechnical fieldwork. React, TypeScript, Vite, Tailwind CSS, shadcn-style Radix UI primitives, Lucide, Dexie / IndexedDB, React Hook Form / Zod, jsPDF and JSZip. No backend, account, cloud storage, analytics or telemetry. Optional, consent-based weather requests use MET Norway; all report processing and record storage remain local.
 
 ## Run locally
 
@@ -156,4 +156,18 @@ In Settings, save your inspector name, role, company and default project once pe
 
 Use Repeat inspection on a record to create a new draft with the same project, element, location, drawing and exact checklist snapshot. Results, measurements, remarks, photos and all daily-report content are cleared. Date/time and UUID are new. The current inspector profile is used when configured; otherwise the source inspector details are retained. Signatures and GPS/weather retrieval are not Phase 1 features.
 
-Backups now use version 2 and include inspector/default-project settings and project defaults. Version 1 backups remain importable. Restore only fills workspace settings when none exist on this device; it never overwrites an existing profile/default choice. Inspection/project/template conflict checks remain atomic. Keep using the same deployed origin and browser profile to access existing records. No database reset or destructive migration is performed.
+Phase 1 backups use version 2 and include inspector/default-project settings and project defaults. Version 1 backups remain importable. Restore only fills workspace settings when none exist on this device; it never overwrites an existing profile/default choice. Inspection/project/template conflict checks remain atomic. Keep using the same deployed origin and browser profile to access existing records. No database reset or destructive migration is performed.
+
+## Phase 2: GPS, weather snapshots and WSP logo
+
+The inspection checklist includes Location & weather. Get location requests browser permission once per action, storing latitude/longitude, device accuracy and acquisition time without replacing manual location/chainage. Permission denial, unavailable positioning and timeout do not block inspections. Reacquiring or clearing GPS clears the previous forecast.
+
+After checking the disclosure checkbox, Fetch weather forecast sends coordinates truncated to four decimal places to api.met.no. MET Norway also receives the user's IP address and browser Origin. No inspection details, names or photos are transmitted. The low-volume simple CORS integration follows https://api.met.no/doc/TermsOfService and https://api.met.no/doc/locationforecast/HowTO (reviewed 2026-11-02); data is attributed under CC BY 4.0. A high-volume deployment would require a caching proxy. No API keys or company servers are required.
+
+This is model forecast data, not measured local weather. The saved snapshot includes forecast coordinates, valid time, provider issue time, original retrieval time, Celsius temperature, wind speed in m/s, optional relative humidity and the provider's next-hour condition summary. Live retrieval is limited to today's inspections; historical inspections support manual observations. Stored snapshots are always labelled and never refreshed on opening an inspection or report. Compare their valid time against the inspection date/time. The manual weather field is the same field used in Daily report details and stays independent of forecasts.
+
+Location-specific caches are bounded to ten entries and obey exposed Expires headers (five-minute fallback). Matching unexpired snapshots can be reused offline while retaining their original retrieval timestamps. Cache failure does not prevent recording a successful snapshot. Requests timeout after 12 seconds; errors preserve the prior inspection snapshot. Core record, photo, report and backup workflows remain offline.
+
+Backup version 3 and inspection-package schema version 2 preserve GPS/weather fields. Backup versions 1 and 2 remain readable; existing records are not backfilled. Repeat uses an explicit allowlist and copies neither GPS nor forecast nor manual weather. Completed records remain read-only. PDF generation requires no weather network requests.
+
+The unmodified official red WSP PNG is embedded locally in src/brand-assets.ts for the interface and PDF. Source: https://www.wsp.com/en-nz/legal/wsp-logo and https://www.wsp.com/-/media/who-we-are/global/image/wsp-logo/img-png-wsp-red.png . The logo remains WSP's trademark; colour, components and aspect ratio are preserved.

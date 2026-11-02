@@ -206,36 +206,39 @@ it("round-trips profiles and project defaults without overwriting local settings
   expect(await loadWorkspace()).toEqual(current);
 });
 
-it("imports legacy v1 backups without adding company to old inspections", async () => {
-  const { default: JSZip } = await import("jszip");
-  const record = newInspection(details, templates[0]);
-  const zip = new JSZip();
-  zip.file(
-    "backup.json",
-    JSON.stringify({
-      format: "site-inspection-backup",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      projects: [
-        {
-          id: details.projectId,
-          name: details.projectName,
-          reference: details.projectReference,
-          fictional: false,
-        },
-      ],
-      inspections: [record],
-      templates,
-      photos: [],
-    }),
-  );
-  await saveWorkspace({
-    inspector: { name: "New Name", role: "ARE", company: "WSP" },
-  });
-  await importBackup(
-    new Blob([await zip.generateAsync({ type: "arraybuffer" })]),
-  );
-  expect(await db.inspections.get(record.id)).toEqual(record);
-  expect((await db.inspections.get(record.id))?.company).toBeUndefined();
-  expect((await loadWorkspace()).inspector?.name).toBe("New Name");
-});
+it.each([1, 2])(
+  "imports legacy v%s backups without adding company to old inspections",
+  async (version) => {
+    const { default: JSZip } = await import("jszip");
+    const record = newInspection(details, templates[0]);
+    const zip = new JSZip();
+    zip.file(
+      "backup.json",
+      JSON.stringify({
+        format: "site-inspection-backup",
+        version,
+        exportedAt: new Date().toISOString(),
+        projects: [
+          {
+            id: details.projectId,
+            name: details.projectName,
+            reference: details.projectReference,
+            fictional: false,
+          },
+        ],
+        inspections: [record],
+        templates,
+        photos: [],
+      }),
+    );
+    await saveWorkspace({
+      inspector: { name: "New Name", role: "ARE", company: "WSP" },
+    });
+    await importBackup(
+      new Blob([await zip.generateAsync({ type: "arraybuffer" })]),
+    );
+    expect(await db.inspections.get(record.id)).toEqual(record);
+    expect((await db.inspections.get(record.id))?.company).toBeUndefined();
+    expect((await loadWorkspace()).inspector?.name).toBe("New Name");
+  },
+);
