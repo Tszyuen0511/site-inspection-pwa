@@ -836,7 +836,11 @@ function Viewer({
 
   const down = (e: React.PointerEvent) => {
     if (!image) return;
-    box.current!.setPointerCapture(e.pointerId);
+    try {
+      box.current!.setPointerCapture(e.pointerId);
+    } catch {
+      /* Capture is an optimisation; the gesture still works without it. */
+    }
     const g = gesture.current,
       p = toLocal(e.clientX, e.clientY);
     g.pointers.set(e.pointerId, p);
@@ -911,31 +915,39 @@ function Viewer({
     g.target = undefined;
     if (!start) return;
     const p = toLocal(e.clientX, e.clientY);
-    if (moving && target) {
-      const t = target;
-      setMoving(undefined);
-      const mx = moving.dx,
-        my = moving.dy;
-      onMove(t, {
-        x: clamp01(t.x + mx),
-        y: clamp01(t.y + my),
-        ...(t.x2 !== undefined
-          ? { x2: clamp01(t.x2 + mx), y2: clamp01((t.y2 ?? 0) + my) }
+    // The final result is computed from the pointer coordinates themselves, not
+    // from preview state: browsers (notably Safari) can deliver pointerup before
+    // React has rendered the last pointermove, so preview state may be stale.
+    const moved = g.moved || Math.hypot(p.x - start.x, p.y - start.y) > TAP;
+    g.moved = false;
+    setMoving(undefined);
+    setDraft(undefined);
+    if (moved && target && mode === "navigate" && !readOnly && image) {
+      const mx = (p.x - start.x) / (image.width * view.scale),
+        my = (p.y - start.y) / (image.height * view.scale);
+      onMove(target, {
+        x: clamp01(target.x + mx),
+        y: clamp01(target.y + my),
+        ...(target.x2 !== undefined
+          ? {
+              x2: clamp01(target.x2 + mx),
+              y2: clamp01((target.y2 ?? 0) + my),
+            }
           : {}),
       });
       return;
     }
-    if (draft) {
-      const { a, b } = draft;
-      setDraft(undefined);
-      if (
-        Math.hypot(a.x - b.x, a.y - b.y) > 0.01 &&
-        (mode === "rect" || mode === "circle" || mode === "arrow")
-      )
-        onShape(mode, a, b);
+    if (
+      moved &&
+      (mode === "rect" || mode === "circle" || mode === "arrow") &&
+      inside(start)
+    ) {
+      const a = toRel(start),
+        b = toRel(p);
+      if (Math.hypot(a.x - b.x, a.y - b.y) > 0.01) onShape(mode, a, b);
       return;
     }
-    if (g.moved) return;
+    if (moved) return;
     if (target) return onSelect(target.id);
     if (!inside(p)) return;
     if (readOnly) return onSelect("");

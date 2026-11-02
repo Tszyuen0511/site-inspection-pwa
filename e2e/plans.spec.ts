@@ -327,3 +327,48 @@ test("keyboard placement, custom items, read-only records and save retry", async
     await expect(page.getByRole("dialog")).toHaveCount(0);
   }
 });
+
+test("a mark drag is saved even when the pointer is released before the screen updates", async ({
+  page,
+}) => {
+  await openDraft(page);
+  await openPlans(page);
+  await page
+    .getByLabel("Upload drawing")
+    .setInputFiles("e2e/fixtures/plan.png");
+  await expect(page.locator(".plans-image")).toBeVisible();
+  await page.getByRole("button", { name: "Place mark" }).click();
+  await chooseItem(page, 1);
+  await place(page, 0.4, 0.5);
+  await expect(marker(page, "1")).toBeVisible();
+  await page.getByRole("button", { name: "Navigate" }).click();
+  const [before] = await rawAll(page, "annotations");
+  // Down, move and up in one task: no React render can happen in between, as
+  // on Safari when pointerup arrives before the last move has been drawn.
+  await page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>(
+      '.plans-viewer .plan-marker[aria-label^="Mark 1:"]',
+    )!;
+    const r = el.getBoundingClientRect();
+    const x = r.x + r.width / 2,
+      y = r.y + r.height / 2;
+    const at = (cx: number, cy: number, buttons: number) => ({
+      pointerId: 7,
+      pointerType: "touch",
+      isPrimary: true,
+      bubbles: true,
+      clientX: cx,
+      clientY: cy,
+      buttons,
+    });
+    el.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+    el.dispatchEvent(new PointerEvent("pointermove", at(x + 70, y + 30, 1)));
+    el.dispatchEvent(new PointerEvent("pointerup", at(x + 70, y + 30, 0)));
+  });
+  await expect
+    .poll(async () => (await rawAll(page, "annotations"))[0].x)
+    .toBeGreaterThan(before.x + 0.02);
+  const [after] = await rawAll(page, "annotations");
+  expect(after.itemId).toBe(before.itemId);
+  expect(after.y).toBeGreaterThan(before.y);
+});

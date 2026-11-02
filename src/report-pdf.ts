@@ -486,11 +486,13 @@ export async function renderInspectionReport(
     for (const [n, pg] of plans.pages.entries()) {
       const d = pg.drawing,
         drawingNo = order.findIndex((x) => x.id === d.id) + 1;
-      doc.addPage("a4", pg.width > pg.height ? "landscape" : "portrait");
-      const W = doc.internal.pageSize.getWidth(),
-        H = doc.internal.pageSize.getHeight(),
-        L = W > H ? 14 : left,
-        R = W > H ? W - 14 : right;
+      // Plan pages stay portrait like the rest of the report. A landscape drawing
+      // is turned 90 degrees when that makes it larger (read by turning the
+      // page clockwise), instead of shrinking it onto a landscape page.
+      doc.addPage("a4", "portrait");
+      const H = doc.internal.pageSize.getHeight(),
+        L = left,
+        R = right;
       brand(L);
       let ty = 24;
       const heading = `${section}.   Location Plan${n ? " (continued)" : ""}`;
@@ -510,22 +512,45 @@ export async function renderInspectionReport(
       const legendH = rows.length
         ? 9 + rowLines.reduce((h, l) => h + l.length * 3.3 + 1.6, 0)
         : 0;
+      const mayTurn = pg.width > pg.height;
       const top = ty + 1,
-        floor = H - 21,
+        floor = H - 21 - (mayTurn ? 4.5 : 0),
         full = floor - top;
       const inline = rows.length > 0 && full - legendH >= full * 0.6;
       const areaH = full - (inline ? legendH : 0);
-      const k = Math.min((R - L) / pg.width, areaH / pg.height);
+      const straight = Math.min((R - L) / pg.width, areaH / pg.height),
+        turnedK = Math.min((R - L) / pg.height, areaH / pg.width);
+      const turned = mayTurn && turnedK > straight * 1.05;
+      const k = turned ? turnedK : straight;
+      // w x h: the drawing's own size; bw x bh: the box it occupies on the page.
       const w = pg.width * k,
         h = pg.height * k,
-        x0 = L + (R - L - w) / 2,
+        bw = turned ? h : w,
+        bh = turned ? w : h,
+        x0 = L + (R - L - bw) / 2,
         y0 = top;
-      doc.addImage(pg.jpeg, "JPEG", x0, y0, w, h, undefined, "FAST");
+      if (turned)
+        // jsPDF turns the image 90 degrees anticlockwise about its bottom-left
+        // corner; this origin places the turned image exactly in the box.
+        doc.addImage(
+          pg.jpeg,
+          "JPEG",
+          x0 + h,
+          y0 + w - h,
+          w,
+          h,
+          undefined,
+          "FAST",
+          90,
+        );
+      else doc.addImage(pg.jpeg, "JPEG", x0, y0, w, h, undefined, "FAST");
       doc.setDrawColor(0);
       doc.setLineWidth(0.25);
-      doc.rect(x0, y0, w, h);
-      const X = (v: number) => x0 + v * w,
-        Y = (v: number) => y0 + v * h;
+      doc.rect(x0, y0, bw, bh);
+      // Drawing-relative (u, v) to page position; after the anticlockwise turn
+      // the point lands at (v, 1 - u) within the box.
+      const P = (u: number, v: number): [number, number] =>
+        turned ? [x0 + v * bw, y0 + (1 - u) * bh] : [x0 + u * bw, y0 + v * bh];
       const marks = plans.annotations.filter(
         (a) => a.drawingId === d.id && a.page === pg.page,
       );
@@ -538,10 +563,8 @@ export async function renderInspectionReport(
         draw();
       };
       for (const a of marks) {
-        const x1 = X(a.x),
-          y1 = Y(a.y),
-          x2 = X(a.x2 ?? a.x),
-          y2 = Y(a.y2 ?? a.y);
+        const [x1, y1] = P(a.x, a.y),
+          [x2, y2] = P(a.x2 ?? a.x, a.y2 ?? a.y);
         if (a.kind === "rect")
           stroke(() =>
             doc.rect(
@@ -581,8 +604,8 @@ export async function renderInspectionReport(
           });
         } else if (a.kind === "text" && a.text) {
           setFont(7, true);
-          const tw = Math.min(doc.getTextWidth(a.text) + 3, w);
-          const bx = Math.min(x1, x0 + w - tw);
+          const tw = Math.min(doc.getTextWidth(a.text) + 3, bw);
+          const bx = Math.min(x1, x0 + bw - tw);
           doc.setFillColor(255, 255, 255);
           doc.setDrawColor(...NAVY);
           doc.setLineWidth(0.35);
@@ -596,8 +619,7 @@ export async function renderInspectionReport(
         const label = l?.label ?? "?";
         setFont(7.5, true);
         const pill = Math.max(5.8, doc.getTextWidth(label) + 2.6),
-          cx = X(a.x),
-          cy = Y(a.y);
+          [cx, cy] = P(a.x, a.y);
         // White halo then navy disc keeps the label readable on any drawing.
         doc.setFillColor(255, 255, 255);
         doc.roundedRect(
@@ -621,13 +643,23 @@ export async function renderInspectionReport(
         doc.text(label, cx, cy + 1, { align: "center" });
       }
       doc.setTextColor(0, 0, 0);
+      let below = y0 + bh + 4;
+      if (turned) {
+        text(
+          "Drawing turned 90 degrees to use the full page: turn the page clockwise to read it.",
+          L,
+          below,
+          7.5,
+        );
+        below += 4.5;
+      }
       if (!rows.length) {
-        text("No marked locations on this page.", L, y0 + h + 4, 7.5);
+        text("No marked locations on this page.", L, below, 7.5);
         continue;
       }
       const legendTitle = `Legend - Drawing ${drawingNo}, page ${pg.page}`;
       if (inline) {
-        let ly = y0 + h + 4;
+        let ly = below;
         text(legendTitle, L, ly, 8, true);
         ly += 1.5;
         const cell = (x: number, cw: number, rh: number) => {
@@ -652,7 +684,7 @@ export async function renderInspectionReport(
           ly += rh;
         });
       } else {
-        text("Legend continues on the next page.", L, y0 + h + 4, 7.5, true);
+        text("Legend continues on the next page.", L, below, 7.5, true);
         newPage(`${section}.   ${legendTitle}`);
         table(
           ["Mark", "Checklist item", "Status"],

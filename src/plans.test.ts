@@ -354,7 +354,7 @@ describe("plans in the PDF report and ZIP", () => {
       })),
     };
   };
-  it("adds a landscape plan page with marks, drawing details and the legend", async () => {
+  it("adds a plan page with marks, drawing details and the legend, turning a landscape drawing to fill a portrait page", async () => {
     const r = await setup();
     const d = await drawing(r, 3, "set.pdf");
     await db.drawings.update(d.id, {
@@ -371,7 +371,8 @@ describe("plans in the PDF report and ZIP", () => {
     const pdf = await (
       await generatePDF(r, [], undefined, await plansFor(r))
     ).text();
-    expect(pdf).toMatch(/\/MediaBox \[0 0 841\.8\d* 595\.2\d*\]/);
+    expect(pdf).not.toMatch(/\/MediaBox \[0 0 841\.8\d* 595\.2\d*\]/);
+    expect(pdf).toContain("turn the page clockwise to read it");
     for (const t of [
       "Location Plan",
       "Site layout",
@@ -439,7 +440,7 @@ describe("plans in the PDF report and ZIP", () => {
 });
 
 describe("review regressions", () => {
-  it("returns to portrait pages after a landscape plan page", async () => {
+  it("keeps every page portrait, including a landscape drawing's plan page", async () => {
     const r = await setup();
     const d = await drawing(r);
     for (let n = 0; n < 40; n++)
@@ -457,10 +458,8 @@ describe("review regressions", () => {
     const boxes = [
       ...pdf.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g),
     ].map((m) => (Number(m[1]) > Number(m[2]) ? "L" : "P"));
-    // Only the plan page is landscape; the legend pages and Site Photos that
-    // follow it are portrait again.
-    expect(boxes[1]).toBe("L");
-    expect(boxes.filter((b) => b === "L")).toHaveLength(1);
+    // Every page, including the plan page, is portrait.
+    expect(boxes.every((b) => b === "P")).toBe(true);
     expect(boxes.length).toBeGreaterThanOrEqual(4);
   });
   it("does not let an unprinted non-Latin file name block the PDF", async () => {
@@ -507,5 +506,67 @@ describe("review regressions", () => {
       w: 1,
       h: 1,
     });
+  });
+});
+
+describe("turned plan drawings", () => {
+  it("places marks on the turned drawing: top-right goes to top-left, top-left to bottom-left", async () => {
+    const r = await setup();
+    const d = await drawing(r);
+    const [i1, i2] = r.template.items;
+    await addAnnotation({
+      inspectionId: r.id,
+      drawingId: d.id,
+      page: 1,
+      kind: "marker",
+      itemId: i1.id,
+      x: 0.02,
+      y: 0.02,
+    });
+    await addAnnotation({
+      inspectionId: r.id,
+      drawingId: d.id,
+      page: 1,
+      kind: "marker",
+      itemId: i2.id,
+      x: 0.98,
+      y: 0.02,
+    });
+    const jpeg = new Uint8Array(readFileSync("src/test-image.jpg"));
+    const pdf = await (
+      await generatePDF(r, [], undefined, {
+        drawings: [d],
+        annotations: await db.annotations.toArray(),
+        pages: [{ drawing: d, page: 1, jpeg, width: 1600, height: 1000 }],
+      })
+    ).text();
+    // Label positions in PDF points (y grows upwards).
+    const at = (label: string) => {
+      // Only the plan page: the checklist table also prints "1" and "2".
+      const plan = pdf.slice(pdf.indexOf("Location Plan"));
+      const m = new RegExp(`([\\d.]+) ([\\d.]+) Td\\s*\\(${label}\\) Tj`).exec(
+        plan,
+      )!;
+      return { x: Number(m[1]), y: Number(m[2]) };
+    };
+    const topLeft = at("1"),
+      topRight = at("2");
+    // Same column (both on the drawing's top edge, now the left edge)...
+    expect(Math.abs(topLeft.x - topRight.x)).toBeLessThan(15);
+    // ...with the drawing's top-left corner now near the bottom of the box.
+    expect(topRight.y - topLeft.y).toBeGreaterThan(200);
+  });
+  it("keeps a portrait drawing upright", async () => {
+    const r = await setup();
+    const d = await drawing(r);
+    const jpeg = new Uint8Array(readFileSync("src/test-image.jpg"));
+    const pdf = await (
+      await generatePDF(r, [], undefined, {
+        drawings: [d],
+        annotations: [],
+        pages: [{ drawing: d, page: 1, jpeg, width: 1000, height: 1400 }],
+      })
+    ).text();
+    expect(pdf).not.toContain("turn the page clockwise");
   });
 });
