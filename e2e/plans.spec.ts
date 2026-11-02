@@ -137,18 +137,62 @@ test("marks follow the checklist, survive zoom, pan, move and reload, and print 
   // Move mark 2 by dragging it.
   const m2 = (await marker(page, "2").boundingBox())!;
   const before2 = await stored("2");
+  // Diagnostics: record the pointer events the page receives during the drag,
+  // printed only if the move is not saved.
+  await page.evaluate(() => {
+    const log: string[] = ((window as any).__pointerLog = []);
+    for (const type of [
+      "pointerdown",
+      "pointermove",
+      "pointerup",
+      "pointercancel",
+      "mousedown",
+      "mouseup",
+      "dragstart",
+      "touchstart",
+    ])
+      document.addEventListener(
+        type,
+        (e) => {
+          const p = e as PointerEvent;
+          const t = e.target as Element;
+          log.push(
+            `${type} id=${p.pointerId ?? "-"} pt=${p.pointerType ?? "-"} x=${Math.round((p as MouseEvent).clientX ?? 0)} y=${Math.round((p as MouseEvent).clientY ?? 0)} on=${t?.tagName}.${(t?.getAttribute?.("class") || "").split(" ")[0]}`,
+          );
+        },
+        true,
+      );
+  });
+  const atMark = await page.evaluate(
+    ([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      return `${el?.tagName}.${el?.getAttribute("class")}`;
+    },
+    [m2.x + m2.width / 2, m2.y + m2.height / 2],
+  );
   await page.mouse.move(m2.x + m2.width / 2, m2.y + m2.height / 2);
   await page.mouse.down();
   await page.mouse.move(m2.x + m2.width / 2 + 60, m2.y + m2.height / 2 + 30, {
     steps: 6,
   });
   await page.mouse.up();
-  await expect
-    .poll(
-      async () =>
-        (await rawAll(page, "annotations")).find((a) => a.id === before2.id).x,
-    )
-    .toBeGreaterThan(before2.x + 0.02);
+  try {
+    await expect
+      .poll(
+        async () =>
+          (await rawAll(page, "annotations")).find((a) => a.id === before2.id)
+            .x,
+      )
+      .toBeGreaterThan(before2.x + 0.02);
+  } catch (error) {
+    console.log(
+      `DRAG DIAGNOSTICS viewport=${JSON.stringify(page.viewportSize())} mark=${JSON.stringify(m2)} elementAtMark=${atMark}\n` +
+        (await page.evaluate(() =>
+          ((window as any).__pointerLog as string[]).join("\n"),
+        )),
+    );
+    throw error;
+  }
   const moved = (await rawAll(page, "annotations")).find(
     (a) => a.id === before2.id,
   );
@@ -326,4 +370,49 @@ test("keyboard placement, custom items, read-only records and save retry", async
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
   }
+});
+
+test("a mark drag is saved even when the pointer is released before the screen updates", async ({
+  page,
+}) => {
+  await openDraft(page);
+  await openPlans(page);
+  await page
+    .getByLabel("Upload drawing")
+    .setInputFiles("e2e/fixtures/plan.png");
+  await expect(page.locator(".plans-image")).toBeVisible();
+  await page.getByRole("button", { name: "Place mark" }).click();
+  await chooseItem(page, 1);
+  await place(page, 0.4, 0.5);
+  await expect(marker(page, "1")).toBeVisible();
+  await page.getByRole("button", { name: "Navigate" }).click();
+  const [before] = await rawAll(page, "annotations");
+  // Down, move and up in one task: no React render can happen in between, as
+  // on Safari when pointerup arrives before the last move has been drawn.
+  await page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>(
+      '.plans-viewer .plan-marker[aria-label^="Mark 1:"]',
+    )!;
+    const r = el.getBoundingClientRect();
+    const x = r.x + r.width / 2,
+      y = r.y + r.height / 2;
+    const at = (cx: number, cy: number, buttons: number) => ({
+      pointerId: 7,
+      pointerType: "touch",
+      isPrimary: true,
+      bubbles: true,
+      clientX: cx,
+      clientY: cy,
+      buttons,
+    });
+    el.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+    el.dispatchEvent(new PointerEvent("pointermove", at(x + 70, y + 30, 1)));
+    el.dispatchEvent(new PointerEvent("pointerup", at(x + 70, y + 30, 0)));
+  });
+  await expect
+    .poll(async () => (await rawAll(page, "annotations"))[0].x)
+    .toBeGreaterThan(before.x + 0.02);
+  const [after] = await rawAll(page, "annotations");
+  expect(after.itemId).toBe(before.itemId);
+  expect(after.y).toBeGreaterThan(before.y);
 });
