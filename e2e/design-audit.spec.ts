@@ -31,7 +31,7 @@ test("navy and orange design audit: contrast, touch targets, keyboard, forms and
 }, testInfo) => {
   await page.goto("./");
   await expect(
-    page.getByRole("heading", { name: "Overview", exact: true }),
+    page.getByRole("heading", { name: /^Inspection records/ }),
   ).toBeVisible();
   if (testInfo.project.name === "mobile-webkit") {
     // iOS/WebKit keyboard link traversal depends on the device's Full Keyboard
@@ -51,7 +51,7 @@ test("navy and orange design audit: contrast, touch targets, keyboard, forms and
   await toggleTheme(page);
   await audit(page, "Dark overview");
   await toggleTheme(page);
-  await page.locator(".recent-row").filter({ hasText: "SP-002" }).click();
+  await page.getByRole("button", { name: "Open SP-002", exact: true }).click();
   for (const name of ["Pass", "Fail", "N/A"]) {
     const button = page
       .locator(".checklist-item")
@@ -142,11 +142,6 @@ test("navy and orange design audit: contrast, touch targets, keyboard, forms and
     page.locator('canvas[data-rendered="true"]').first(),
   ).toBeVisible();
   await audit(page, "Report preview");
-  await page
-    .getByRole("button", { name: "Report details", exact: true })
-    .click();
-  await audit(page, "Daily report form");
-  await page.getByLabel("Close dialog", { exact: true }).click();
   await workspaceNav(page, "Settings");
   await audit(page, "Settings");
   if (testInfo.project.name.startsWith("mobile")) {

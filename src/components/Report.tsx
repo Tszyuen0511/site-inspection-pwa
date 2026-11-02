@@ -17,25 +17,20 @@ import { Button, Dialog, StatusBadge } from "./ui";
 import { download, generatePDF, loadFont } from "../export";
 import { loadReportPlans } from "../plan-render";
 import { PdfPreview } from "./PdfPreview";
-import { ReportTemplates } from "./ReportTemplates";
-import { DailyReportForm } from "./DailyReportForm";
 import type { DailyReport } from "../daily-report";
 export function Report({
   record,
   photos,
   onExport,
-  onSaveDetails,
 }: {
   record: Inspection;
   photos: PhotoMeta[];
   onExport: () => void;
-  onSaveDetails: (details: DailyReport) => Promise<boolean>;
 }) {
   const [url, setURL] = useState(""),
     [blob, setBlob] = useState<Blob>(),
     [error, setError] = useState(""),
     [refresh, setRefresh] = useState(0);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   useEffect(() => {
     let cancelled = false,
       objectURL = "";
@@ -70,15 +65,11 @@ export function Report({
           <div className="eyebrow">REPORT / {record.element}</div>
           <h1>Report preview</h1>
           <p>
-            A daily site report with numbered sections, photo sheets and a
-            checklist appendix.
+            Detail of inspection, inspection items, location plans and site
+            photographs.
           </p>
         </div>
         <div className="title-actions">
-          <Button variant="outline" onClick={() => setDetailsOpen(true)}>
-            <Settings2 size={17} />
-            Report details
-          </Button>
           <Button variant="outline" onClick={onExport}>
             <Archive size={17} />
             Export ZIP
@@ -106,7 +97,6 @@ export function Report({
           {photos.length} photos
         </span>
       </div>
-      <ReportTemplates record={record} onApply={onSaveDetails} />
       <div className="report-canvas">
         {error ? (
           <div className="empty-state">
@@ -144,19 +134,6 @@ export function Report({
         Recorded observations only. Completion does not represent formal review,
         signature or approval.
       </p>
-      <Dialog
-        open={detailsOpen}
-        onOpenChange={setDetailsOpen}
-        title="Daily site report details"
-        description="Fill the front-page sections, staff, work done and testing tables. Details are saved locally with this inspection."
-        wide
-      >
-        <DailyReportForm
-          record={record}
-          onSave={onSaveDetails}
-          onCancel={() => setDetailsOpen(false)}
-        />
-      </Dialog>
     </>
   );
 }

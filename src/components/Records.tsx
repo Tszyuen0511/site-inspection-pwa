@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Archive,
   ArrowRight,
@@ -12,8 +12,8 @@ import {
 } from "lucide-react";
 import { displayNo, type Inspection, type Project } from "../domain";
 import { Button, StatusBadge } from "./ui";
-import { formatDate } from "./Dashboard";
 export function Records({
+  banner,
   records,
   projects,
   initialFilter,
@@ -24,6 +24,7 @@ export function Records({
   onRepeat,
   onDelete,
 }: {
+  banner?: ReactNode;
   records: Inspection[];
   projects: Project[];
   initialFilter: string;
@@ -81,6 +82,7 @@ export function Records({
           New inspection
         </Button>
       </div>
+      {banner}
       <div className="card records-card">
         <div className="records-filters">
           <div className="search-input">
@@ -234,4 +236,12 @@ export function Records({
       </div>
     </>
   );
+}
+
+export function formatDate(s: string) {
+  return new Date(s + "T12:00:00").toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }

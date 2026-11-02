@@ -17,7 +17,8 @@ export async function editorTab(page: Page, label: string) {
     await page.getByRole("button", { name: "Photo log", exact: true }).click();
   else if (label === "Report")
     await page
-      .getByRole("button", { name: "Preview full report", exact: true })
+      .getByRole("navigation", { name: "Inspection sections" })
+      .getByRole("button", { name: "Report", exact: true })
       .click();
   else
     await page

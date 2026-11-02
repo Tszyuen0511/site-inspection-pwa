@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import {
-  Archive,
   ArrowLeft,
   ArrowUpRight,
   CheckCircle2,
@@ -13,7 +12,6 @@ import {
   Download,
   HardHat,
   Images,
-  LayoutDashboard,
   Loader2,
   MapPin,
   Moon,
@@ -48,14 +46,12 @@ import {
   type Inspection,
 } from "./domain";
 import { Button, Dialog } from "./components/ui";
-import { Dashboard } from "./components/Dashboard";
 import { Records } from "./components/Records";
 import { Checklist } from "./components/Checklist";
 import { InspectionForm } from "./components/InspectionForm";
 import { PhotoManager } from "./components/PhotoManager";
 import { Plans } from "./components/Plans";
 import { loadDrawingOriginals, loadReportPlans } from "./plan-render";
-import { ArchiveWorkspace } from "./components/ArchiveWorkspace";
 import { exportBackupFiles, type BackupOutcome } from "./backup-export";
 import { EMPTY_SCAN, scanStoredData } from "./integrity";
 import {
@@ -75,29 +71,19 @@ import {
   RecoveryButton,
   StorageLossBanner,
 } from "./components/StorageNotices";
-import { loadReportTemplates, applyReportTemplate } from "./report-templates";
 import { Settings } from "./components/Settings";
 import { Report } from "./components/Report";
 import { generatePackage, generatePDF, download, loadFont } from "./export";
 import { wspLogo } from "./brand-assets";
 import { fromStoredPhoto, listPhotoViews } from "./photos";
 type Page =
-  | "dashboard"
-  | "records"
-  | "checklist"
-  | "photos"
-  | "plans"
-  | "report"
-  | "settings"
-  | "photo-library"
-  | "report-library"
-  | "exports";
+  "records" | "checklist" | "photos" | "plans" | "report" | "settings";
 interface InstallEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: string }>;
 }
 export default function App() {
-  const [page, setPage] = useState<Page>("dashboard"),
+  const [page, setPage] = useState<Page>("records"),
     [newOpen, setNewOpen] = useState(false),
     [detailsOpen, setDetailsOpen] = useState(false),
     [menuOpen, setMenuOpen] = useState(false),
@@ -135,7 +121,6 @@ export default function App() {
     failedSave = useRef(false),
     failedPhotos = useRef<Array<() => Promise<unknown>>>([]);
   const workspace = useLiveQuery(loadWorkspace, [], {});
-  const reportTemplates = useLiveQuery(loadReportTemplates, [], []);
   // One validated read. Rows that fail validation are reported (never deleted).
   // Scan only once seeding has finished so the first result is never a stale empty one.
   const scanned = useLiveQuery(
@@ -465,11 +450,7 @@ export default function App() {
     }
   }, [records]);
   const nav = [
-    { id: "dashboard" as Page, label: "Overview", Icon: LayoutDashboard },
     { id: "records" as Page, label: "Inspection records", Icon: ClipboardList },
-    { id: "photo-library" as Page, label: "Photographs", Icon: Images },
-    { id: "report-library" as Page, label: "Reports", Icon: FileText },
-    { id: "exports" as Page, label: "Exports", Icon: Archive },
   ];
   const isEditor =
     page === "checklist" ||
@@ -499,7 +480,7 @@ export default function App() {
           href="#"
           onClick={(e) => {
             e.preventDefault();
-            void navigate("dashboard");
+            void navigate("records");
           }}
         >
           <span className="brand-mark">
@@ -549,6 +530,13 @@ export default function App() {
             >
               <Images size={19} />
               Photo log
+            </button>
+            <button
+              className={page === "report" ? "active" : ""}
+              onClick={() => void navigate("report")}
+            >
+              <FileText size={19} />
+              Report
             </button>
             <button
               className={
@@ -656,23 +644,15 @@ export default function App() {
             <span>Workspace</span>
             <span>/</span>
             <strong>
-              {page === "dashboard"
-                ? "Overview"
-                : page === "records"
-                  ? "Inspection records"
-                  : page === "checklist"
-                    ? "Inspection checklist"
-                    : page === "photos"
-                      ? "Photographs"
-                      : page === "report"
-                        ? "Report preview"
-                        : page === "photo-library"
-                          ? "Photographs"
-                          : page === "report-library"
-                            ? "Reports"
-                            : page === "exports"
-                              ? "Exports"
-                              : "Settings"}
+              {page === "records"
+                ? "Inspection records"
+                : page === "checklist"
+                  ? "Inspection checklist"
+                  : page === "photos"
+                    ? "Photographs"
+                    : page === "report"
+                      ? "Report preview"
+                      : "Settings"}
             </strong>
           </div>
           <div className="topbar-actions">
@@ -925,8 +905,9 @@ export default function App() {
                   </select>
                 </div>
               )}
-              {page === "dashboard" && (
-                <Dashboard
+              {page === "records" && (
+                <Records
+                  key={recordFilter}
                   banner={
                     <BackupReminder
                       status={
@@ -944,20 +925,6 @@ export default function App() {
                       onBackup={() => void exportBackup()}
                     />
                   }
-                  records={records}
-                  projects={projects}
-                  onNew={() => setNewOpen(true)}
-                  onOpen={(r) => void open(r)}
-                  onRecords={(filter) => {
-                    setRecordFilter(filter || "");
-                    void navigate("records");
-                  }}
-                  onSettings={() => void navigate("settings")}
-                />
-              )}
-              {page === "records" && (
-                <Records
-                  key={recordFilter}
                   records={records}
                   projects={projects}
                   initialFilter={recordFilter}
@@ -1032,10 +999,6 @@ export default function App() {
                   record={active}
                   photos={photoCache.current}
                   onExport={() => void exportZIP(active)}
-                  onSaveDetails={async (dailyReport) => {
-                    save({ ...activeRef.current!, dailyReport });
-                    return flush();
-                  }}
                 />
               )}
               {isEditor && !active && (
@@ -1048,27 +1011,6 @@ export default function App() {
                     New inspection
                   </Button>
                 </div>
-              )}
-              {(page === "photo-library" ||
-                page === "report-library" ||
-                page === "exports") && (
-                <ArchiveWorkspace
-                  mode={
-                    page === "photo-library"
-                      ? "photos"
-                      : page === "report-library"
-                        ? "reports"
-                        : "exports"
-                  }
-                  records={records}
-                  projects={projects}
-                  onOpenPhotos={(r) => void open(r, "photos")}
-                  onOpenReport={(r) => void open(r, "report")}
-                  onPDF={(r) => void exportPDF(r)}
-                  onZIP={(r) => void exportZIP(r)}
-                  onSettings={() => void navigate("settings")}
-                  onBackup={() => void exportBackup()}
-                />
               )}
               {page === "settings" && (
                 <Settings
@@ -1121,10 +1063,8 @@ export default function App() {
       </div>
       <nav className="mobile-nav" aria-label="Mobile navigation">
         {[
-          { id: "dashboard", label: "Overview", Icon: LayoutDashboard },
           { id: "records", label: "Records", Icon: ClipboardList },
           { id: "new", label: "New", Icon: Plus },
-          { id: "photo-library", label: "Photos", Icon: Images },
           { id: "settings", label: "Settings", Icon: Settings2 },
         ].map(({ id, label, Icon }) => (
           <button
@@ -1212,36 +1152,11 @@ export default function App() {
             variant="ghost"
             onClick={() => {
               setMenuOpen(false);
-              void navigate("dashboard");
-            }}
-          >
-            Overview
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              setMenuOpen(false);
               void navigate("records");
             }}
           >
             Records
           </Button>
-          {[
-            { id: "photo-library", label: "Photographs" },
-            { id: "report-library", label: "Reports" },
-            { id: "exports", label: "Exports" },
-          ].map((item) => (
-            <Button
-              key={item.id}
-              variant="ghost"
-              onClick={() => {
-                setMenuOpen(false);
-                void navigate(item.id as Page);
-              }}
-            >
-              {item.label}
-            </Button>
-          ))}
           <Button
             variant="ghost"
             onClick={() => {
@@ -1285,9 +1200,8 @@ export default function App() {
           projects={projects}
           templates={templates}
           workspace={workspace}
-          reportTemplates={reportTemplates}
           onCancel={() => setNewOpen(false)}
-          onSubmit={async (details, reportTemplateId) => {
+          onSubmit={async (details) => {
             await run(async () => {
               const t = templates.find((t) => t.name === details.type);
               if (!t) throw new Error("Select a valid template.");
@@ -1300,11 +1214,6 @@ export default function App() {
                 ...newInspection(details, t),
                 fictional: p.fictional,
               };
-              const reportTemplate = reportTemplates.find(
-                (t) => t.id === reportTemplateId,
-              );
-              if (reportTemplate)
-                r.dailyReport = applyReportTemplate(r, reportTemplate);
               activate(await addNumberedInspection(r));
               setPage("checklist");
               setNewOpen(false);

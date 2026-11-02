@@ -35,7 +35,6 @@ import {
 import {
   localDate,
   projectSchema,
-  templateSchema,
   type Project,
   type Template,
 } from "../domain";
@@ -77,8 +76,6 @@ export function Settings({
     [pendingBackup, setPendingBackup] = useState<BackupOutcome["pending"]>(),
     [demoOpen, setDemoOpen] = useState(false),
     [busy, setBusy] = useState(false),
-    [template, setTemplate] = useState<Template>(),
-    [templateText, setTemplateText] = useState(""),
     [storage, setStorage] = useState(""),
     [fontName, setFontName] = useState("");
   const demo = useLiveQuery(findRemovableDemoData, [], {
@@ -331,44 +328,6 @@ export function Settings({
                 Recovery data is an unvalidated raw copy for support and manual
                 recovery. It is not a backup and cannot be imported.
               </p>
-            </div>
-          </section>
-          <section className="card settings-section">
-            <div className="card-header">
-              <div>
-                <h2>Checklist templates</h2>
-                <p>JSON-based, versioned and stored locally.</p>
-              </div>
-            </div>
-            <div className="settings-body">
-              <p className="small muted">
-                Existing inspections retain an exact template snapshot. Editing
-                a template applies only to new inspections. Optional criteria
-                require both text and a documentReference. No criteria are
-                supplied; verify project approval before entering them.
-                Compliance is never calculated.
-              </p>
-              {templates.map((t) => (
-                <div key={t.id} className="template-row">
-                  <div>
-                    <strong>{t.name}</strong>
-                    <small>
-                      {t.version} · {t.items.length} items
-                      {t.demo ? " · Demonstration placeholder" : ""}
-                    </small>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setTemplate(t);
-                      setTemplateText(JSON.stringify(t, null, 2));
-                    }}
-                  >
-                    Configure JSON
-                  </Button>
-                </div>
-              ))}
             </div>
           </section>
           <section className="card settings-section">
@@ -725,60 +684,6 @@ export function Settings({
             }
           >
             {busy ? "Validating & importing…" : "Import backup"}
-          </Button>
-        </div>
-      </Dialog>
-      <Dialog
-        open={!!template}
-        onOpenChange={(v) => !v && setTemplate(undefined)}
-        title="Configure checklist JSON"
-        description="Change the version when editing. Placeholder categories must remain marked as demonstration content in this demo."
-        wide
-      >
-        <textarea
-          className="json-editor mono"
-          spellCheck={false}
-          rows={18}
-          value={templateText}
-          onChange={(e) => setTemplateText(e.target.value)}
-        />
-        <div className="form-actions">
-          <Button variant="outline" onClick={() => setTemplate(undefined)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() =>
-              void run(async () => {
-                const next = templateSchema.parse(JSON.parse(templateText));
-                if (next.id !== template!.id || next.name !== template!.name)
-                  throw new Error(
-                    "Keep the existing template ID and category name.",
-                  );
-                if (next.version === template!.version)
-                  throw new Error("Give the edited template a new version.");
-                if (next.id !== "sheet-pile" && !next.demo)
-                  throw new Error(
-                    "Placeholder templates must remain marked as demonstration content.",
-                  );
-                if (
-                  new Set(next.items.map((i) => i.id)).size !==
-                  next.items.length
-                )
-                  throw new Error("Checklist item IDs must be unique.");
-                for (const item of next.items)
-                  if (
-                    new Set(item.fields.map((f) => f.key)).size !==
-                    item.fields.length
-                  )
-                    throw new Error(
-                      "Measurement keys must be unique within each item.",
-                    );
-                await db.templates.put(next);
-                setTemplate(undefined);
-              }, "Template saved. Existing inspections keep their recorded version.")
-            }
-          >
-            Save new version
           </Button>
         </div>
       </Dialog>

@@ -10,7 +10,7 @@ test("create, autosave, resume, validate, photos, PDF, ZIP and offline", async (
   page.on("pageerror", (e) => runtimeErrors.push(e.message));
   await page.goto("./");
   await expect(
-    page.getByRole("heading", { name: "Overview", exact: true }),
+    page.getByRole("heading", { name: /^Inspection records/ }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "New inspection", exact: true })
@@ -89,45 +89,6 @@ test("create, autosave, resume, validate, photos, PDF, ZIP and offline", async (
     page.getByRole("dialog", { name: "Full-screen photograph" }),
   ).toBeVisible();
   await page.getByLabel("Close photograph").click();
-  await page
-    .getByRole("combobox", { name: "Report section", exact: true })
-    .selectOption("core");
-  await page
-    .getByLabel("Core log element / group", { exact: true })
-    .fill("BH-E2E");
-  await editorTab(page, "Report");
-  await page
-    .getByRole("button", { name: "Report details", exact: true })
-    .click();
-  await page
-    .getByLabel("Daily site report number", { exact: true })
-    .fill("DAILY-E2E-001");
-  await page
-    .getByLabel("5. Weather", { exact: true })
-    .fill("Recorded sunny conditions");
-  await page
-    .getByRole("button", { name: "Add staff row", exact: true })
-    .click();
-  await page.getByLabel("Occupation", { exact: true }).fill("Site Engineer");
-  await page.getByLabel("Company", { exact: true }).fill("Demo Supervision");
-  await page.getByLabel("Number of people", { exact: true }).fill("1");
-  await page.getByRole("button", { name: "Add work row", exact: true }).click();
-  await page.getByLabel("Work activity", { exact: true }).fill("Piling");
-  await page
-    .getByLabel("Element / borehole number", { exact: true })
-    .fill("SP-E2E");
-  await page
-    .getByLabel("Progress of work", { exact: true })
-    .fill("1.2500 m recorded");
-  await page
-    .getByRole("button", { name: "Save report details", exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog", {
-      name: "Daily site report details",
-      exact: true,
-    }),
-  ).not.toBeVisible();
   await editorTab(page, "Checklist");
   await page
     .getByRole("button", { name: "Complete inspection", exact: true })
@@ -159,12 +120,7 @@ test("create, autosave, resume, validate, photos, PDF, ZIP and offline", async (
   expect(data.inspection.responses["corner-welding"].status).toBe("Fail");
   expect(data.photos[0].caption).toBe("Local test photo");
   expect(data.photos[0].itemId).toBe("toe-level");
-  expect(data.photos[0].reportSection).toBe("core");
-  expect(data.photos[0].reportGroup).toBe("BH-E2E");
-  expect(data.inspection.dailyReport.reportNumber).toBe("DAILY-E2E-001");
-  expect(data.inspection.dailyReport.workDone[0].progress).toBe(
-    "1.2500 m recorded",
-  );
+  expect(data.photos[0].reportSection).toBe("site");
   const photoPath = dataFile.replace(
     "Inspection_Data.json",
     data.photos[0].path,
@@ -183,7 +139,7 @@ test("create, autosave, resume, validate, photos, PDF, ZIP and offline", async (
   await context.setOffline(true);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Overview", exact: true }),
+    page.getByRole("heading", { name: /^Inspection records/ }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "New inspection", exact: true })
@@ -267,7 +223,7 @@ test("backup restores records and photographs into a fresh browser profile", asy
   const restored = await fresh.newPage();
   await restored.goto("./");
   await expect(
-    restored.getByRole("heading", { name: "Overview", exact: true }),
+    restored.getByRole("heading", { name: /^Inspection records/ }),
   ).toBeVisible();
   await workspaceNav(restored, "Settings");
   await restored.getByLabel("Choose backup").setInputFiles(backupPath);
@@ -302,7 +258,7 @@ test("save failures block navigation until a successful retry", async ({
   page,
 }, testInfo) => {
   await page.goto("./");
-  await page.locator(".recent-row").filter({ hasText: "SP-002" }).click();
+  await page.getByRole("button", { name: "Open SP-002", exact: true }).click();
   await page.evaluate(() => {
     const original = IDBObjectStore.prototype.put;
     (window as unknown as { restorePut: () => void }).restorePut = () => {
@@ -350,7 +306,7 @@ test("save failures block navigation until a successful retry", async ({
 test("responsive overview and dark mode", async ({ page }, testInfo) => {
   await page.goto("./");
   await expect(
-    page.getByRole("heading", { name: "Overview", exact: true }),
+    page.getByRole("heading", { name: /^Inspection records/ }),
   ).toBeVisible();
   expect(
     await page.evaluate(

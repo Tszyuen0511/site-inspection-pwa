@@ -40,7 +40,7 @@ async function rawGetAll(page: Page, store: string) {
 }
 const overview = (page: Page) =>
   expect(
-    page.getByRole("heading", { name: "Overview", exact: true }),
+    page.getByRole("heading", { name: /^Inspection records/ }),
   ).toBeVisible();
 
 test("a damaged record is reported, kept unchanged, and the app still opens", async ({
@@ -94,9 +94,7 @@ test("suspected storage loss does not hide itself behind demo data", async ({
   );
   await page.reload();
   await expect(page.getByTestId("loss-banner")).toBeVisible();
-  await expect(
-    page.getByText("Your first inspection starts here"),
-  ).toBeVisible();
+  await expect(page.getByText("No inspections found")).toBeVisible();
   await expect(page.getByText("SP-001")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Start fresh with demonstration data" })

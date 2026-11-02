@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
-  ArrowUpRight,
   Camera,
-  Circle,
   Hand,
   ListOrdered,
   Maximize,
@@ -11,9 +9,7 @@ import {
   Minus,
   Plus,
   RotateCcw,
-  Square,
   Trash2,
-  Type,
   Upload,
 } from "lucide-react";
 import { db } from "../db";
@@ -49,10 +45,6 @@ type Point = { x: number; y: number };
 const TOOLS: { mode: Mode; label: string; Icon: typeof Hand }[] = [
   { mode: "navigate", label: "Navigate", Icon: Hand },
   { mode: "marker", label: "Place mark", Icon: MapPin },
-  { mode: "rect", label: "Rectangle", Icon: Square },
-  { mode: "circle", label: "Circle", Icon: Circle },
-  { mode: "arrow", label: "Arrow", Icon: ArrowUpRight },
-  { mode: "text", label: "Text note", Icon: Type },
 ];
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const TAP = 6; // px of movement that still counts as a tap
