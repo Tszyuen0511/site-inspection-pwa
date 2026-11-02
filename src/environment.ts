@@ -13,6 +13,22 @@ export function weatherURL(gps: GPS) {
   gpsSchema.parse(gps);
   return `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${coordinate(gps.latitude)}&lon=${coordinate(gps.longitude)}`;
 }
+export function positionTime(timestamp: number, now = Date.now()) {
+  // Observed WebKit automation returns microseconds. Normalize only when that
+  // interpretation places the device sample within five minutes of now.
+  // Never substitute the current time for an invalid device timestamp.
+  const microseconds =
+    timestamp > 1e14 && Math.abs(timestamp / 1000 - now) <= 300000;
+  return {
+    capturedAt: new Date(
+      microseconds ? timestamp / 1000 : timestamp,
+    ).toISOString(),
+    deviceTimestamp: timestamp,
+    timestampUnit: microseconds
+      ? ("microseconds-normalized" as const)
+      : ("milliseconds" as const),
+  };
+}
 export function detectLocation(): Promise<GPS> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation)
@@ -29,7 +45,7 @@ export function detectLocation(): Promise<GPS> {
               latitude: p.coords.latitude,
               longitude: p.coords.longitude,
               accuracy: p.coords.accuracy,
-              capturedAt: new Date(p.timestamp).toISOString(),
+              ...positionTime(p.timestamp),
             }),
           );
         } catch {
@@ -203,7 +219,7 @@ export async function fetchWeather(
 }
 export function gpsText(gps?: GPS) {
   return gps
-    ? `GPS: ${gps.latitude.toFixed(6)}, ${gps.longitude.toFixed(6)}; device accuracy +/- ${gps.accuracy.toFixed(0)} m; acquired ${gps.capturedAt}`
+    ? `GPS: ${gps.latitude.toFixed(6)}, ${gps.longitude.toFixed(6)}; device accuracy +/- ${gps.accuracy.toFixed(0)} m; acquired ${gps.capturedAt}${gps.timestampUnit === "microseconds-normalized" ? " (device microsecond timestamp normalized)" : ""}`
     : "GPS: Not recorded";
 }
 export function weatherText(weather?: Weather) {

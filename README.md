@@ -171,3 +171,5 @@ Location-specific caches are bounded to ten entries and obey exposed Expires hea
 Backup version 3 and inspection-package schema version 2 preserve GPS/weather fields. Backup versions 1 and 2 remain readable; existing records are not backfilled. Repeat uses an explicit allowlist and copies neither GPS nor forecast nor manual weather. Completed records remain read-only. PDF generation requires no weather network requests.
 
 The unmodified official red WSP PNG is embedded locally in src/brand-assets.ts for the interface and PDF. Source: https://www.wsp.com/en-nz/legal/wsp-logo and https://www.wsp.com/-/media/who-we-are/global/image/wsp-logo/img-png-wsp-red.png . The logo remains WSP's trademark; colour, components and aspect ratio are preserved.
+
+The GPS snapshot also preserves the raw device timestamp and interpreted units. The observed WebKit microsecond timestamp anomaly is normalized only if division by 1000 places the sample within five minutes of the current clock; invalid values are rejected rather than replaced with the current time. Normalized samples are explicitly labelled.

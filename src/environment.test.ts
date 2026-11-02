@@ -4,6 +4,7 @@ import {
   fetchWeather,
   parseForecast,
   weatherURL,
+  positionTime,
 } from "./environment";
 import { db, repeatInspection } from "./db";
 import { fixture } from "./test-fixtures";
@@ -71,13 +72,11 @@ it("truncates coordinates and parses forecast provenance and units", () => {
   ).toThrow("No recent forecast");
 });
 it("reuses an unexpired location cache offline without making another request", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify(body()), {
-        headers: { Expires: new Date(Date.now() + 600000).toUTCString() },
-      }),
-    );
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify(body()), {
+      headers: { Expires: new Date(Date.now() + 600000).toUTCString() },
+    }),
+  );
   vi.stubGlobal("fetch", fetcher);
   const first = await fetchWeather(gps);
   expect(first.cached).toBe(false);
@@ -125,7 +124,7 @@ it("captures GPS accuracy and acquisition time", async () => {
         }),
     },
   });
-  expect(await detectLocation()).toEqual(gps);
+  expect(await detectLocation()).toMatchObject(gps);
 });
 it("aborts a timed-out weather request", async () => {
   vi.useFakeTimers();
@@ -167,4 +166,19 @@ it("backs up GPS and weather exactly and clears them on repeat", async () => {
   expect(copy.gps).toBeUndefined();
   expect(copy.weatherSnapshot).toBeUndefined();
   expect(await db.inspections.get(record.id)).toEqual(record);
+});
+
+it("normalizes observed WebKit microseconds without inventing acquisition times", () => {
+  const now = Date.now();
+  expect(positionTime(now, now)).toEqual({
+    capturedAt: new Date(now).toISOString(),
+    deviceTimestamp: now,
+    timestampUnit: "milliseconds",
+  });
+  expect(positionTime(now * 1000, now)).toEqual({
+    capturedAt: new Date(now).toISOString(),
+    deviceTimestamp: now * 1000,
+    timestampUnit: "microseconds-normalized",
+  });
+  expect(() => positionTime(NaN, now)).toThrow();
 });

@@ -4,6 +4,8 @@ export const gpsSchema = z.object({
   longitude: z.number().finite().min(-180).max(180),
   accuracy: z.number().finite().nonnegative(),
   capturedAt: z.string().datetime(),
+  deviceTimestamp: z.number().finite().nonnegative().optional(),
+  timestampUnit: z.enum(["milliseconds", "microseconds-normalized"]).optional(),
 });
 export const weatherSchema = z.object({
   provider: z.literal("MET Norway"),
