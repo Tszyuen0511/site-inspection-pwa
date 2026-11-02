@@ -40,6 +40,7 @@ test("profile and project defaults persist; repeat clears results offline", asyn
   await expect(page.getByLabel("Profile inspector name *")).toHaveValue(
     "Phase One Inspector",
   );
+  await workspaceNav(page, "Overview");
   await page
     .getByRole("button", { name: "New inspection", exact: true })
     .first()
@@ -100,6 +101,7 @@ test("profile and project defaults persist; repeat clears results offline", asyn
   ).toBeVisible();
   await editorTab(page, "Photos (0)");
   await expect(page.locator(".photo-card")).toHaveCount(0);
+  await editorTab(page, "Checklist");
   await page.getByRole("button", { name: "Details", exact: true }).click();
   await expect(page.getByLabel("General remarks", { exact: true })).toHaveValue(
     "",
