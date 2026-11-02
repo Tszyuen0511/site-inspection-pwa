@@ -137,18 +137,62 @@ test("marks follow the checklist, survive zoom, pan, move and reload, and print 
   // Move mark 2 by dragging it.
   const m2 = (await marker(page, "2").boundingBox())!;
   const before2 = await stored("2");
+  // Diagnostics: record the pointer events the page receives during the drag,
+  // printed only if the move is not saved.
+  await page.evaluate(() => {
+    const log: string[] = ((window as any).__pointerLog = []);
+    for (const type of [
+      "pointerdown",
+      "pointermove",
+      "pointerup",
+      "pointercancel",
+      "mousedown",
+      "mouseup",
+      "dragstart",
+      "touchstart",
+    ])
+      document.addEventListener(
+        type,
+        (e) => {
+          const p = e as PointerEvent;
+          const t = e.target as Element;
+          log.push(
+            `${type} id=${p.pointerId ?? "-"} pt=${p.pointerType ?? "-"} x=${Math.round((p as MouseEvent).clientX ?? 0)} y=${Math.round((p as MouseEvent).clientY ?? 0)} on=${t?.tagName}.${(t?.getAttribute?.("class") || "").split(" ")[0]}`,
+          );
+        },
+        true,
+      );
+  });
+  const atMark = await page.evaluate(
+    ([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      return `${el?.tagName}.${el?.getAttribute("class")}`;
+    },
+    [m2.x + m2.width / 2, m2.y + m2.height / 2],
+  );
   await page.mouse.move(m2.x + m2.width / 2, m2.y + m2.height / 2);
   await page.mouse.down();
   await page.mouse.move(m2.x + m2.width / 2 + 60, m2.y + m2.height / 2 + 30, {
     steps: 6,
   });
   await page.mouse.up();
-  await expect
-    .poll(
-      async () =>
-        (await rawAll(page, "annotations")).find((a) => a.id === before2.id).x,
-    )
-    .toBeGreaterThan(before2.x + 0.02);
+  try {
+    await expect
+      .poll(
+        async () =>
+          (await rawAll(page, "annotations")).find((a) => a.id === before2.id)
+            .x,
+      )
+      .toBeGreaterThan(before2.x + 0.02);
+  } catch (error) {
+    console.log(
+      `DRAG DIAGNOSTICS viewport=${JSON.stringify(page.viewportSize())} mark=${JSON.stringify(m2)} elementAtMark=${atMark}\n` +
+        (await page.evaluate(() =>
+          ((window as any).__pointerLog as string[]).join("\n"),
+        )),
+    );
+    throw error;
+  }
   const moved = (await rawAll(page, "annotations")).find(
     (a) => a.id === before2.id,
   );
