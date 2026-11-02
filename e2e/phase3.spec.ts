@@ -99,6 +99,9 @@ test("report templates save safe defaults, apply to new inspections and remain a
   await page
     .getByRole("button", { name: "Save report details", exact: true })
     .click();
+  await expect(
+    page.getByRole("dialog", { name: "Daily site report details", exact: true }),
+  ).not.toBeVisible();
   await workspaceNav(page, "Exports");
   const pending = page.waitForEvent("download");
   await page
