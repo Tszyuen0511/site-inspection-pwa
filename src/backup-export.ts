@@ -1,40 +1,51 @@
-import { createBackupVolumes } from "./backup";
+import { createBackupVolumes, type BackupFile } from "./backup";
 import { download } from "./export";
-import { recordBackup } from "./storage-health";
+import { recordBackup, type BackupLog } from "./storage-health";
 
 export interface BackupOutcome {
   message: string;
   /** True when something could not be included and the user must be told. */
   warning: boolean;
   excluded: { kind: string; id: string; message: string }[];
+  /**
+   * Set when the backup has several files. They are NOT downloaded automatically
+   * (browsers, especially iOS, block downloads that are not tied to a tap), and the
+   * backup is not logged until the user has saved every part.
+   */
+  pending?: { files: BackupFile[]; log: BackupLog };
 }
-const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Records the backup once every part has been handed to the browser. */
+export const completeBackup = (log: BackupLog) => recordBackup(log);
 /**
- * Builds verified backup file(s), downloads them, and only then records the
- * backup so the reminder stops. Inspections that were not fully included are
- * kept in the log as uncovered, so they keep triggering the reminder.
+ * Builds verified backup file(s). A single file is downloaded straight away; several
+ * files are returned as `pending` for the user to save one by one. The backup is only
+ * logged (which silences reminders) after the download was requested, and
+ * inspections not fully included stay marked as uncovered.
  */
 export async function exportBackupFiles(): Promise<BackupOutcome> {
   const result = await createBackupVolumes();
-  for (const [i, file] of result.files.entries()) {
-    if (i) await pause(700); // browsers may block simultaneous downloads
-    download(file.blob, file.name);
-  }
-  await recordBackup({
+  const log: BackupLog = {
     at: result.snapshotAt,
     inspectionCount: result.inspectionCount,
     excludedIds: result.excludedInspectionIds,
-  });
-  const parts = result.files.length;
+  };
   const warning = result.excluded.length > 0;
+  const tail = warning
+    ? ` ${result.excluded.length} stored item${result.excluded.length === 1 ? " was" : "s were"} NOT included - see Settings > Data integrity, and download recovery data.`
+    : "";
+  const counted = `${result.inspectionCount} inspection${result.inspectionCount === 1 ? "" : "s"}`;
+  if (result.files.length > 1)
+    return {
+      warning,
+      excluded: result.excluded,
+      pending: { files: result.files, log },
+      message: `Backup verified (${counted}) in ${result.files.length} files. Save every file; the backup counts as done only when you have saved them all.${tail}`,
+    };
+  download(result.files[0].blob, result.files[0].name);
+  await recordBackup(log);
   return {
     warning,
     excluded: result.excluded,
-    message:
-      `Backup verified and download requested (${result.inspectionCount} inspection${result.inspectionCount === 1 ? "" : "s"}` +
-      `${parts > 1 ? `, ${parts} files - keep all of them` : ""}). Check your Downloads folder: the app cannot confirm the file was saved.` +
-      (warning
-        ? ` ${result.excluded.length} stored item${result.excluded.length === 1 ? " was" : "s were"} NOT included - see Settings > Data integrity, and download recovery data.`
-        : ""),
+    message: `Backup verified and download requested (${counted}). Check your Downloads folder: the app cannot confirm the file was saved.${tail}`,
   };
 }

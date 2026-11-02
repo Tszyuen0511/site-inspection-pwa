@@ -1,8 +1,9 @@
 import { wspLogo, wspLogoRatio } from "./brand-assets";
-import { gpsText } from "./environment";
 import { jsPDF } from "jspdf";
 import { dailyReportDefaults, reportDate } from "./daily-report";
 import {
+  displayNo,
+  localDate,
   photoNumber,
   type Inspection,
   type Photo,
@@ -10,8 +11,9 @@ import {
 } from "./domain";
 import { orderedPhotos } from "./photos";
 
-// A4 daily-site-report layout. The reference is a layout guide only: no project,
-// corporate marks, personnel, photographs, criteria or approvals are copied.
+// A4 site inspection report: 1. Detail of Inspection, 2. Inspection Item,
+// 3. Site Photos (then core logs / progress plans when present). Daily-report
+// data is kept in the record and exports but is not printed here.
 export async function renderInspectionReport(
   record: Inspection,
   photos: PhotoMeta[],
@@ -24,6 +26,7 @@ export async function renderInspectionReport(
     right = left + width,
     bottom = 270;
   const generated = new Date().toISOString();
+  const number = displayNo(record);
   let y = 12;
   const font = fontBase64 ? "Report" : "times";
   if (fontBase64) {
@@ -31,7 +34,7 @@ export async function renderInspectionReport(
     doc.addFont("Report.ttf", "Report", "normal");
   }
   doc.setProperties({
-    title: `Daily Site Report - ${daily.reportNumber || record.id}`,
+    title: `Site Inspection Report - ${number}`,
     subject: `${record.type} inspection / ${record.element}`,
     author: daily.preparedBy || record.inspector,
     creator: "Site Inspection (local browser)",
@@ -80,7 +83,7 @@ export async function renderInspectionReport(
     );
     doc.text("SITE INSPECTION", left + 24, 13);
   };
-  const newPage = (title = "Daily Site Report - continued") => {
+  const newPage = (title = `Inspection No. ${number} - continued`) => {
     doc.addPage();
     brand();
     y = 24;
@@ -129,17 +132,12 @@ export async function renderInspectionReport(
     }
     y += 0.7;
   };
-  const numbered = (number: number, value: string) => {
-    const entries = value.trim() ? value.split("\n") : ["Not recorded"];
-    entries.forEach((entry, i) =>
-      paragraph(`${number}.${i + 1}   ${entry || " "}`),
-    );
-  };
   const table = (
     headers: string[],
     rows: string[][],
     widths: number[],
     size = 8,
+    emphasis?: (row: string[], column: number) => boolean,
   ) => {
     const lineHeight = Math.max(3.2, size * 0.42),
       padding = 1.3;
@@ -171,8 +169,9 @@ export async function renderInspectionReport(
     };
     tableHead();
     for (const row of rows) {
+      const bold = row.map((_, i) => !!emphasis?.(row, i));
       const lines = row.map((value, i) =>
-        wrap(value || "-", widths[i] - padding * 2, size),
+        wrap(value || "-", widths[i] - padding * 2, size, bold[i]),
       );
       const total = Math.max(...lines.map((l) => l.length));
       let offset = 0;
@@ -204,6 +203,7 @@ export async function renderInspectionReport(
                 x + padding,
                 y + padding + size * 0.3528 + n * lineHeight,
                 size,
+                bold[i],
               ),
             );
           x += widths[i];
@@ -218,48 +218,9 @@ export async function renderInspectionReport(
     }
     y += 3;
   };
-  const paired = (
-    a: { number: number; title: string; body: string },
-    b: { number: number; title: string; body: string },
-  ) => {
-    const gap = 8,
-      col = (width - gap) / 2;
-    const titleA = wrap(`${a.number}.   ${a.title}`, col, 9.2, true),
-      titleB = wrap(`${b.number}.   ${b.title}`, col, 9.2, true);
-    const bodyA = wrap(a.body || "Not recorded", col - 6, 8.7),
-      bodyB = wrap(b.body || "Not recorded", col - 6, 8.7);
-    const titleHeight = Math.max(titleA.length, titleB.length) * 3.9,
-      availableLines = Math.max(
-        1,
-        Math.floor((bottom - 40 - titleHeight) / 3.7),
-      );
-    let offset = 0,
-      total = Math.max(bodyA.length, bodyB.length);
-    while (offset < total) {
-      const count = Math.min(total - offset, availableLines);
-      ensure(titleHeight + count * 3.7 + 5);
-      y += 2;
-      for (const [index, lines] of [titleA, titleB].entries())
-        lines.forEach((line, n) =>
-          text(line, left + index * (col + gap), y + n * 3.9, 9.2, true),
-        );
-      y += titleHeight;
-      [bodyA, bodyB].forEach((lines, index) =>
-        lines
-          .slice(offset, offset + count)
-          .forEach((line, n) =>
-            text(line, left + 6 + index * (col + gap), y + n * 3.7, 8.7),
-          ),
-      );
-      y += count * 3.7 + 3;
-      offset += count;
-      if (offset < total) newPage();
-    }
-  };
 
   brand();
   y = 27;
-  // Centred, compact title block, matching the daily-report reference hierarchy.
   const centred = (value: string, size: number, bold = false) => {
     const lineHeight = Math.max(3.8, size * 0.43);
     for (const line of wrap(value, width, size, bold)) {
@@ -268,20 +229,9 @@ export async function renderInspectionReport(
     }
   };
   centred(record.projectName, 11, true);
-  centred(
-    daily.supervisionTitle || `${record.role} Site Supervisor`,
-    10.5,
-    true,
-  );
-  centred(`Daily Site Report No. ${daily.reportNumber || record.id}`, 10, true);
-  centred(
-    `(Report Period: ${daily.reportPeriod || reportDate(record.date)})`,
-    10,
-    true,
-  );
-  y += 2;
-  text(reportDate(record.date), right, y, 9.5, true, "right");
-  y += 5;
+  centred(`(Project Reference: ${record.projectReference})`, 9);
+  centred(`Inspection No. ${number}`, 9);
+  y += 3;
   if (record.fictional) {
     text("FICTIONAL DEMONSTRATION RECORD", 105, y, 7, true, "center");
     y += 4;
@@ -298,193 +248,183 @@ export async function renderInspectionReport(
     y += 4;
   }
 
-  heading(1, "Contract Status (for Field Works only)", 18);
-  const contractLeft = [
-    `1.1   Time elapsed: ${daily.timeElapsed || "Not recorded"}`,
-    `1.2   Time remaining: ${daily.timeRemaining || "Not recorded"}`,
-    `Contract period: ${daily.contractPeriod || "Not recorded"}`,
-  ].join("\n");
-  const contractRight = [
-    `Commencement date: ${daily.commencementDate || "Not recorded"}`,
-    `Completion date: ${daily.completionDate || "Not recorded"}`,
-  ].join("\n");
-  // These entries are recorded text, not calculated contract or engineering decisions.
-  const contractA = wrap(contractLeft, 76, 8.5),
-    contractB = wrap(contractRight, 76, 8.5);
-  const contractHeight = Math.max(contractA.length, contractB.length) * 3.6;
-  ensure(contractHeight + 3);
-  contractA.forEach((line, i) => text(line, left + 6, y + i * 3.6, 8.5));
-  contractB.forEach((line, i) => text(line, left + 88, y + i * 3.6, 8.5));
-  y += contractHeight + 3;
-  heading(2, "Site Activities");
-  numbered(2, daily.activities);
-  heading(3, "Site Staff / Visitors", 18);
-  paragraph("3.1   Site staff and workers (by observation)", {
-    size: 8.7,
-    gap: 1,
+  // 1. Detail of Inspection. Weather sits directly after Location. A weather
+  // observation recorded by the inspector takes precedence over the saved forecast.
+  const stamp = (iso: string) => {
+    const d = new Date(iso);
+    return isNaN(+d)
+      ? iso
+      : `${localDate(d)} / ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  const observed = daily.weather.trim();
+  const weather =
+    observed ||
+    (record.weatherSnapshot
+      ? `${record.weatherSnapshot.summary}, ${record.weatherSnapshot.temperatureC} C (forecast)`
+      : "Not recorded");
+  heading(1, "Detail of Inspection", 36);
+  for (const line of [
+    `Type: ${record.type}`,
+    `Element: ${record.element}`,
+    `Location: ${record.location}`,
+    `Weather: ${weather}`,
+    `Inspection date / time: ${record.date} / ${record.time}`,
+    `Inspector: ${record.inspector} / ${record.role}`,
+    ...(record.company ? [`Company: ${record.company}`] : []),
+    `Drawing reference: ${record.drawing || "Not recorded"}`,
+    `Created: ${stamp(record.createdAt)}`,
+    `Updated: ${stamp(record.updatedAt)}`,
+  ])
+    paragraph(line, { size: 9, gap: 0.4 });
+  y += 3;
+
+  // 2. Inspection Item. The fourth column only ever holds values recorded against
+  // the item's measurement fields, so it is headed as such.
+  heading(2, "Inspection Item", 22);
+  const checklist = record.template.items.map((item, index) => {
+    const r = record.responses[item.id];
+    const values = r?.values || {};
+    const known = new Set(item.fields.flatMap((f) => [f.key, f.key + "Unit"]));
+    const measurements = item.fields
+      .filter((f) => values[f.key]?.trim())
+      .map(
+        (f) =>
+          `${f.label}: ${values[f.key]}${f.unit && values[f.key + "Unit"] ? " " + values[f.key + "Unit"] : ""}`,
+      );
+    for (const [key, value] of Object.entries(values))
+      if (!known.has(key) && value.trim())
+        measurements.push(`${key}: ${value}`);
+    return [
+      String(index + 1),
+      item.description +
+        (item.criteria ? "\nConfigured criteria: " + item.criteria.text : ""),
+      r?.status || "Not Inspected",
+      measurements.join("\n") || (item.fields.length ? "Not recorded" : "-"),
+      r?.remarks || "-",
+      (r?.reference || "-") +
+        (item.criteria
+          ? "\nCriteria document: " + item.criteria.documentReference
+          : ""),
+    ];
   });
-  const staff = daily.staff.filter((r) =>
-    Object.values(r).some((v) => v.trim()),
-  );
-  table(
-    ["Occupation", "Company", "Number of people"],
-    staff.length
-      ? staff.map((r) => [r.occupation, r.company, r.people])
-      : [["Not recorded", "-", "-"]],
-    [58, 56, 52],
-    8.5,
-  );
-  paired(
-    {
-      number: 4,
-      title: "Safety / Fire Safety / Site Security",
-      body: `4.1   ${daily.safety || "Not recorded"}`,
-    },
-    {
-      number: 5,
-      title: "Weather",
-      body: `5.1   ${daily.weather.trim() || (record.weatherSnapshot ? `${record.weatherSnapshot.summary}, ${record.weatherSnapshot.temperatureC} C` : "Not recorded")}`,
-    },
-  );
-  paired(
-    {
-      number: 6,
-      title: "RFI Received Today",
-      body: `6.1   ${daily.rfi || "Not recorded"}`,
-    },
-    {
-      number: 7,
-      title: "Architect Instruction",
-      body: `7.1   ${daily.instructions || "Not recorded"}`,
-    },
-  );
-  const failed = record.template.items
-    .map((item, i) => ({
-      item,
-      index: i + 1,
-      response: record.responses[item.id],
-    }))
-    .filter((i) => i.response?.status === "Fail");
-  // Explicit checklist failures are reflected in the daily summary; never replace them with Nil.
-  const failedText = failed.length
-    ? "\nRecorded failed checklist items:\n" +
-      failed
-        .map(
-          (f) =>
-            `${f.index}. ${f.item.description}: ${f.response.remarks || "Remark not recorded"}`,
-        )
-        .join("\n")
-    : "";
-  paired(
-    {
-      number: 8,
-      title: "Non-compliance",
-      body: `8.1   ${daily.nonCompliance || "Not recorded"}${failedText}`,
-    },
-    {
-      number: 9,
-      title: "Site Memo Issued to Contractor Today",
-      body: `9.1   Issued during report period: ${daily.memosIssued || "Not recorded"}\n9.2   Total issued: ${daily.memosTotal || "Not recorded"}`,
-    },
-  );
-  heading(10, "Work Done", 20);
-  const works = daily.workDone.filter((r) =>
-    Object.values(r).some((v) => v.trim()),
-  );
   table(
     [
-      "Work activity",
-      "No. of rigs",
-      "Element / borehole no.",
-      "Date of commencement",
-      "Progress of work",
-      "Work status",
-      "Date of completion",
+      "No.",
+      "Inspection item",
+      "Status",
+      "Recorded measurements / data",
+      "Remarks",
+      "Drawing / specification",
     ],
-    works.length
-      ? works.map((r) => [
-          r.activity,
-          r.rigs,
-          r.element,
-          r.commencement,
-          r.progress,
-          r.status,
-          r.completion,
-        ])
-      : [["Not recorded", "-", "-", "-", "-", "-", "-"]],
-    [22, 12, 21, 23, 34, 28, 26],
+    checklist,
+    [7, 40, 20, 34, 39, 26],
     7.8,
+    // Failed items stay identifiable: their status is printed in bold.
+    (row, column) => column === 2 && row[2] === "Fail",
   );
-  heading(11, "Testing", 17);
-  const tests = daily.testing.filter((r) =>
-    Object.values(r).some((v) => v.trim()),
-  );
-  table(
-    ["Type of testing", "Completed testing"],
-    tests.length
-      ? tests.map((r) => [r.type, r.completed])
-      : [["Not recorded", "-"]],
-    [66, 100],
-    8.7,
+  y += 2;
+  if (record.remarks.trim()) {
+    paragraph("General remarks", {
+      x: left,
+      width,
+      size: 9,
+      bold: true,
+      gap: 0.6,
+    });
+    paragraph(record.remarks, { x: left, width, size: 8.5 });
+  }
+  paragraph(
+    "Statuses and measurements are recorded by the inspector. Completion is not formal review, approval or a digital signature. No compliance decision is calculated by this application.",
+    { x: left, width, size: 7.5 },
   );
 
   const sorted = orderedPhotos(photos),
     numbers = new Map(sorted.map((photo, index) => [photo.id, index]));
   const captionNotes: { label: string; caption: string }[] = [];
+  const itemLabel = (p: PhotoMeta) => {
+    const index = record.template.items.findIndex((i) => i.id === p.itemId);
+    return index < 0
+      ? "Inspection Item: General observation"
+      : `Inspection Item: ${index + 1}. ${record.template.items[index].description}`;
+  };
+  // Everything printed in a cell is derived from that one photo object, so a
+  // caption, item or remark can never come from a neighbouring photograph.
+  const MAX_LINES = 8;
+  const photoBlock = (p: PhotoMeta, cellWidth: number) => {
+    const index = numbers.get(p.id)!;
+    const label = `Photo ${index + 1} (${photoNumber(index)})`;
+    let caption = wrap(
+      `${label}: ${p.caption || "No caption recorded."}`,
+      cellWidth - 8,
+      8,
+      true,
+    );
+    if (caption.length > MAX_LINES) {
+      captionNotes.push({ label, caption: p.caption });
+      caption = wrap(
+        `${label}: see extended caption notes.`,
+        cellWidth - 8,
+        8,
+        true,
+      );
+    }
+    let item = wrap(itemLabel(p), cellWidth - 8, 7.2);
+    if (item.length > 4) {
+      captionNotes.push({
+        label: `${label} inspection item`,
+        caption: itemLabel(p),
+      });
+      item = wrap(
+        "Inspection Item: see extended caption notes.",
+        cellWidth - 8,
+        7.2,
+      );
+    }
+    let remark = p.remark?.trim()
+      ? wrap(`Remark: ${p.remark.trim()}`, cellWidth - 8, 7.2)
+      : [];
+    if (remark.length > MAX_LINES) {
+      captionNotes.push({
+        label: `${label} remark`,
+        caption: p.remark!.trim(),
+      });
+      remark = wrap("Remark: see extended caption notes.", cellWidth - 8, 7.2);
+    }
+    const textHeight =
+      caption.length * 3.2 + 1 + (item.length + remark.length) * 3.1;
+    return {
+      p,
+      caption,
+      item,
+      remark,
+      height: Math.max(78, 61 + textHeight + 4),
+    };
+  };
   const photoGrid = async (
     images: PhotoMeta[],
     number: number,
     title: string,
   ) => {
-    const start = () => {
-      newPage(`${number}.   ${title}`);
-    };
-    start();
+    const heading = `${number}.   ${title}`;
+    newPage(heading);
     if (!images.length) {
       paragraph("No photographs are attached to this section.");
       return;
     }
+    const col = width / 2;
     for (let i = 0; i < images.length; i += 2) {
-      const pair = images.slice(i, i + 2);
-      const col = width / 2;
-      const captions = pair.map((p) => {
-        const index = numbers.get(p.id)!;
-        const label = `Photo ${index + 1} (${photoNumber(index)})`;
-        const full = `${label}: ${p.caption || "No caption recorded."}`;
-        const lines = wrap(full, col - 8, 8, true);
-        if (lines.length > 8) {
-          captionNotes.push({ label, caption: p.caption });
-          return wrap(
-            `${label}: see extended caption notes.`,
-            col - 8,
-            8,
-            true,
-          );
-        }
-        return lines;
-      });
-      const associations = pair.map((p) => {
-        const item = record.template.items.find((i) => i.id === p.itemId);
-        return wrap(
-          item ? `Related item: ${item.description}` : "General observation",
-          col - 8,
-          7.2,
-        );
-      });
-      const captionHeight = Math.max(
-        ...captions.map(
-          (l, index) => l.length * 3.2 + associations[index].length * 3.1,
-        ),
-      );
-      const height = Math.max(78, 61 + captionHeight + 4);
-      if (y + height > bottom) start();
-      for (let c = 0; c < 2; c++) {
-        const x = left + c * col;
+      const row = images.slice(i, i + 2).map((p) => photoBlock(p, col));
+      const height = Math.max(...row.map((b) => b.height));
+      // A photograph and its text always stay together on one page.
+      if (y + height > bottom) newPage(`${heading} (continued)`);
+      // A lone photograph is centred; no empty neighbouring cell is drawn.
+      const startX = row.length === 1 ? left + col / 2 : left;
+      for (const [c, block] of row.entries()) {
+        const x = startX + c * col,
+          p = block.p;
         doc.setLineWidth(0.18);
         doc.setDrawColor(0);
         doc.rect(x, y, col, height);
-        const p = pair[c];
-        if (!p) continue;
         const scale = Math.min((col - 8) / p.width, 54 / p.height);
         const w = p.width * scale,
           h = p.height * scale;
@@ -496,33 +436,35 @@ export async function renderInspectionReport(
           w,
           h,
         );
-        let captionY = y + 61;
-        for (const line of captions[c]) {
-          text(line, x + col / 2, captionY, 8, true, "center");
+        let lineY = y + 61;
+        for (const line of block.caption) {
+          text(line, x + col / 2, lineY, 8, true, "center");
           setFont(8, true);
           const length = Math.min(col - 8, doc.getTextWidth(line));
           doc.setLineWidth(0.15);
           doc.line(
             x + (col - length) / 2,
-            captionY + 0.6,
+            lineY + 0.6,
             x + (col + length) / 2,
-            captionY + 0.6,
+            lineY + 0.6,
           );
-          captionY += 3.2;
+          lineY += 3.2;
         }
-        associations[c].forEach((line, n) =>
-          text(line, x + col / 2, captionY + 1 + n * 3.1, 7.2, false, "center"),
-        );
+        lineY += 1;
+        for (const line of [...block.item, ...block.remark]) {
+          text(line, x + 4, lineY, 7.2);
+          lineY += 3.1;
+        }
       }
       y += height;
     }
   };
   await photoGrid(
     sorted.filter((p) => !p.reportSection || p.reportSection === "site"),
-    12,
+    3,
     "Site Photos",
   );
-  let nextSection = 13;
+  let nextSection = 4;
   const cores = sorted.filter((p) => p.reportSection === "core");
   if (cores.length) {
     const groups = new Map<string, PhotoMeta[]>();
@@ -541,7 +483,9 @@ export async function renderInspectionReport(
         `${nextSection}.   Site Progress Plan (updated to ${reportDate(record.date)})`,
       );
       const index = numbers.get(p.id)!;
-      const caption = `Photo ${index + 1} (${photoNumber(index)}): ${p.caption || "No caption recorded."}`;
+      const label = `Photo ${index + 1} (${photoNumber(index)})`;
+      const body = `${p.caption || "No caption recorded."}\n${itemLabel(p)}${p.remark?.trim() ? `\nRemark: ${p.remark.trim()}` : ""}`;
+      const caption = `${label}: ${body}`;
       const lines = wrap(caption, width - 4, 8.5);
       const captionHeight = Math.min(lines.length, 8) * 3.7 + 8;
       const scale = Math.min(
@@ -562,7 +506,7 @@ export async function renderInspectionReport(
       );
       y += h + 9;
       if (lines.length > 8) {
-        captionNotes.push({ label: photoNumber(index), caption: p.caption });
+        captionNotes.push({ label, caption: body });
         paragraph(`${photoNumber(index)}: see extended caption notes.`);
       } else paragraph(caption, { x: left, width, size: 8.5 });
     }
@@ -579,60 +523,6 @@ export async function renderInspectionReport(
       });
   }
 
-  newPage(`${nextSection}.   Inspection Checklist Appendix`);
-  paragraph(
-    `${record.type} / Element: ${record.element} / Location: ${record.location}`,
-    { x: left, width, size: 9, bold: true },
-  );
-  paragraph(
-    `Inspection date / time: ${record.date} / ${record.time} (recorded local time)\nInspector: ${record.inspector} / ${record.role}${record.company ? `\nCompany: ${record.company}` : ""}\nPrepared by: ${daily.preparedBy || record.inspector}\nProject reference: ${record.projectReference}\nDrawing reference: ${record.drawing || "Not recorded"}\nTemplate: ${record.template.id} / version ${record.template.version}\nCreated: ${record.createdAt}\nUpdated: ${record.updatedAt}`,
-    { x: left, width, size: 8.5 },
-  );
-  paragraph(gpsText(record.gps), { x: left, width, size: 8.5 });
-  const checklist = record.template.items.map((item, index) => {
-    const r = record.responses[item.id];
-    const known = new Set(item.fields.flatMap((f) => [f.key, f.key + "Unit"]));
-    const measurements = item.fields.map(
-      (f) =>
-        `${f.label}: ${r?.values[f.key] || "-"}${f.unit && r?.values[f.key + "Unit"] ? " " + r.values[f.key + "Unit"] : ""}`,
-    );
-    for (const [key, value] of Object.entries(r?.values || {}))
-      if (!known.has(key)) measurements.push(`${key}: ${value}`);
-    return [
-      String(index + 1),
-      item.description +
-        (item.criteria ? "\nConfigured criteria: " + item.criteria.text : ""),
-      r?.status || "Not Inspected",
-      measurements.join("\n") || "-",
-      r?.remarks || "-",
-      (r?.reference || "-") +
-        (item.criteria
-          ? "\nCriteria document: " + item.criteria.documentReference
-          : ""),
-    ];
-  });
-  table(
-    [
-      "No.",
-      "Inspection item",
-      "Status",
-      "Measurements / data",
-      "Remarks",
-      "Drawing / specification",
-    ],
-    checklist,
-    [7, 40, 22, 32, 39, 26],
-    7.8,
-  );
-  heading(nextSection + 1, "General Remarks");
-  paragraph(record.remarks || "No general remarks recorded.", {
-    x: left,
-    width,
-  });
-  paragraph(
-    "Statuses and measurements are recorded by the inspector. Completion is not formal review, approval or a digital signature. No compliance decision is calculated by this application.",
-    { x: left, width, size: 7.5 },
-  );
   for (let page = 1; page <= doc.getNumberOfPages(); page++) {
     doc.setPage(page);
     doc.setDrawColor(0);
@@ -647,7 +537,7 @@ export async function renderInspectionReport(
       .slice(0, 2)
       .forEach((line, i) => text(line, left, 282 + i * 2.8, 7));
     text(String(page), right, 282, 8, false, "right");
-    if (page === 1 && record.weatherSnapshot && !daily.weather.trim()) {
+    if (page === 1 && record.weatherSnapshot && !observed) {
       setFont(6.2);
       doc.textWithLink("Forecast summary: MET Norway", left, 286, {
         url: "https://www.met.no/",
@@ -657,7 +547,7 @@ export async function renderInspectionReport(
       });
     }
     text(
-      `${record.id} | Rev. ${record.revision} | ${record.status}`,
+      `${number} | Rev. ${record.revision} | ${record.status}`,
       left,
       289,
       6.2,

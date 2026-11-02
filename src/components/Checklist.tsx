@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Download, FileText, Plus, RotateCcw } from "lucide-react";
 import {
+  displayNo,
   progress,
   type Inspection,
   type PhotoView,
@@ -347,7 +348,8 @@ export function Checklist({
               Sign-off
             </h2>
             <p>
-              {p.done} of {p.total} items recorded · Revision {record.revision}
+              {displayNo(record)} · {p.done} of {p.total} items recorded ·
+              Revision {record.revision}
             </p>
             <p className="muted small">
               Completion records your observations and does not represent formal

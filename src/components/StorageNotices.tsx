@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createRecoveryDump, recoveryFileName } from "../recovery";
 import { download } from "../export";
 import type { IntegrityIssue } from "../integrity";
 import type { BackupStatus, Persistence } from "../storage-health";
-import { Button } from "./ui";
+import { completeBackup, type BackupOutcome } from "../backup-export";
+import { Button, Dialog } from "./ui";
 
 export function RecoveryButton({
   onResult,
@@ -142,5 +143,96 @@ export function BackupReminder({
         </Button>
       )}
     </div>
+  );
+}
+
+const NOT_DONE =
+  "Backup NOT completed: not every part was saved, so it is not recorded as backed up.";
+/** Lets the user save each part of a multi-file backup with its own tap. */
+export function BackupPartsDialog({
+  pending,
+  onClose,
+}: {
+  pending?: BackupOutcome["pending"];
+  onClose: (message: string) => void;
+}) {
+  // Keyed by the backup it belongs to, so tapped-part state can never leak from an
+  // earlier backup into a new one.
+  return pending ? (
+    <PartsDialog
+      key={`${pending.log.at}:${pending.files.length}`}
+      pending={pending}
+      onClose={onClose}
+    />
+  ) : null;
+}
+function PartsDialog({
+  pending,
+  onClose,
+}: {
+  pending: NonNullable<BackupOutcome["pending"]>;
+  onClose: (message: string) => void;
+}) {
+  const [saved, setSaved] = useState<number[]>([]);
+  const [recorded, setRecorded] = useState(false);
+  const [error, setError] = useState("");
+  const total = pending.files.length;
+  const done = saved.length === total;
+  useEffect(() => {
+    if (!done) return;
+    completeBackup(pending.log)
+      .then(() => setRecorded(true))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [pending, done]);
+  const close = () =>
+    onClose(
+      recorded
+        ? "Backup saved: all parts downloaded."
+        : done
+          ? "Parts were downloaded but the backup could not be recorded, so reminders will continue."
+          : NOT_DONE,
+    );
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => !open && close()}
+      title="Save your backup files"
+      description="This backup is split into several files, each restorable on its own. Tap each button, then check your Downloads folder."
+    >
+      <ul className="small" data-testid="backup-parts">
+        {pending.files.map((f, i) => (
+          <li key={f.name} className="row wrap">
+            <span>
+              Part {i + 1} of {total}: {f.inspections} inspection
+              {f.inspections === 1 ? "" : "s"}, {f.photos} photo
+              {f.photos === 1 ? "" : "s"} ({(f.blob.size / 1048576).toFixed(1)}{" "}
+              MB)
+            </span>
+            <Button
+              size="sm"
+              variant={saved.includes(i) ? "outline" : "default"}
+              onClick={() => {
+                download(f.blob, f.name);
+                setSaved((s) => (s.includes(i) ? s : [...s, i]));
+              }}
+            >
+              {saved.includes(i) ? "Download again" : `Download part ${i + 1}`}
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {done && (
+        <p role="status">
+          All parts requested. Keep every file together; restore with Import
+          backup and select all of them.
+        </p>
+      )}
+      {error && <p role="alert">{error}</p>}
+      <div className="form-actions">
+        <Button variant="outline" onClick={close}>
+          {done ? "Done" : "Close"}
+        </Button>
+      </div>
+    </Dialog>
   );
 }

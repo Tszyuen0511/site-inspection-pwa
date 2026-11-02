@@ -26,6 +26,8 @@ const metadataSchema = z.object({
   createdAt: z.string(),
   reportSection: z.enum(["site", "core", "plan"]).optional(),
   reportGroup: z.string().max(500).optional(),
+  // Added with photo remarks; optional so older backups still restore.
+  remark: z.string().max(5000).optional(),
   originalType: z.enum(["image/jpeg", "image/png", "image/webp"]),
   originalSize: z
     .number()
@@ -494,8 +496,14 @@ export async function importBackup(
 export async function importBackupDetailed(
   file: Blob,
   maxBytes = MAX_BACKUP_SIZE,
-): Promise<{ inspections: number; volume?: BackupVolume }> {
+): Promise<{
+  inspections: number;
+  volume?: BackupVolume;
+  /** Imported numbers already used by a different local record (nothing is renumbered). */
+  numberConflicts: string[];
+}> {
   const { data, photos } = await readBackup(file, maxBytes);
+  const numberConflicts: string[] = [];
   // Only unchanged fictional starter records may be replaced. User work is never overwritten.
   await db.transaction(
     "rw",
@@ -570,6 +578,17 @@ export async function importBackupDetailed(
           );
         await db.meta.put({ key, value: JSON.stringify(template) });
       }
+      // Records from another device can carry a number already used here. They are
+      // imported unchanged (never renumbered) and the collision is reported.
+      for (const r of data.inspections) {
+        if (!r.inspectionNo) continue;
+        const same = await db.inspections
+          .where("projectId")
+          .equals(r.projectId)
+          .filter((x) => x.inspectionNo === r.inspectionNo && x.id !== r.id)
+          .count();
+        if (same) numberConflicts.push(r.inspectionNo);
+      }
       await db.inspections.bulkPut(data.inspections);
       await db.photos.bulkAdd(photos);
       if (data.workspace && !(await db.meta.get("workspace")))
@@ -579,5 +598,9 @@ export async function importBackupDetailed(
       await db.meta.put({ key: "initialized", value: "1" });
     },
   );
-  return { inspections: data.inspections.length, volume: data.volume };
+  return {
+    inspections: data.inspections.length,
+    volume: data.volume,
+    numberConflicts,
+  };
 }

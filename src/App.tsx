@@ -30,6 +30,8 @@ import {
   db,
   deleteInspection,
   repeatInspection,
+  addNumberedInspection,
+  numberForProject,
   finalize,
   inspectionContentKey,
   SaveConflictError,
@@ -51,7 +53,7 @@ import { Checklist } from "./components/Checklist";
 import { InspectionForm } from "./components/InspectionForm";
 import { PhotoManager } from "./components/PhotoManager";
 import { ArchiveWorkspace } from "./components/ArchiveWorkspace";
-import { exportBackupFiles } from "./backup-export";
+import { exportBackupFiles, type BackupOutcome } from "./backup-export";
 import { EMPTY_SCAN, scanStoredData } from "./integrity";
 import {
   backupStatus,
@@ -66,6 +68,7 @@ import {
 import {
   BackupReminder,
   IntegrityBanner,
+  BackupPartsDialog,
   RecoveryButton,
   StorageLossBanner,
 } from "./components/StorageNotices";
@@ -117,7 +120,9 @@ export default function App() {
     [lossSuspected, setLossSuspected] = useState(false),
     [persistence, setPersistence] = useState<Persistence>("unsupported"),
     [integrityOpen, setIntegrityOpen] = useState(false),
-    [conflict, setConflict] = useState(false);
+    [conflict, setConflict] = useState(false),
+    [pendingBackup, setPendingBackup] = useState<BackupOutcome["pending"]>(),
+    [exportConfirm, setExportConfirm] = useState<Inspection>();
   const activeRef = useRef<Inspection | undefined>(undefined),
     queue = useRef<Promise<unknown>>(Promise.resolve()),
     unsaved = useRef(false),
@@ -165,7 +170,10 @@ export default function App() {
         p.id !== selectedPhotos[i]?.id ||
         p.order !== selectedPhotos[i]?.order ||
         p.itemId !== selectedPhotos[i]?.itemId ||
-        p.caption !== selectedPhotos[i]?.caption,
+        p.caption !== selectedPhotos[i]?.caption ||
+        p.remark !== selectedPhotos[i]?.remark ||
+        p.reportSection !== selectedPhotos[i]?.reportSection ||
+        p.reportGroup !== selectedPhotos[i]?.reportGroup,
     )
   )
     photoCache.current = selectedPhotos;
@@ -379,22 +387,24 @@ export default function App() {
         ),
         packageName(effective) + ".zip",
       );
-      if (effective.status !== "Draft") {
-        const exported = {
-          ...effective,
-          status: "Exported" as const,
-          updatedAt: new Date().toISOString(),
-        };
-        await saveIfUnchanged(
-          exported,
-          activeRef.current?.id === effective.id
-            ? baseKey.current
-            : inspectionContentKey(effective),
-        );
-        if (activeRef.current?.id === effective.id) activate(exported);
-      }
+      // The browser cannot tell us the file was saved, so ask before changing status.
+      if (effective.status === "Completed") setExportConfirm(effective);
     }, "ZIP package generated and download requested.");
     setBusy(false);
+  };
+  const markExported = async (record: Inspection) => {
+    const isActive = activeRef.current?.id === record.id;
+    const current = isActive ? activeRef.current! : record;
+    const exported = {
+      ...current,
+      status: "Exported" as const,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveIfUnchanged(
+      exported,
+      isActive ? baseKey.current : inspectionContentKey(record),
+    );
+    if (isActive) activate(exported);
   };
   const exportPDF = async (selected?: Inspection) => {
     if (!(await flush()) || (!selected && !activeRef.current)) return;
@@ -420,6 +430,7 @@ export default function App() {
       const outcome = await exportBackupFiles();
       // Warnings stay on screen until dismissed; they are never auto-hidden.
       setNotice({ message: outcome.message, error: outcome.warning });
+      if (outcome.pending) setPendingBackup(outcome.pending);
       if (outcome.warning) setIntegrityOpen(true);
     });
     setBusy(false);
@@ -1027,6 +1038,19 @@ export default function App() {
               )}
               {page === "settings" && (
                 <Settings
+                  onDemoRemoved={(ids) => {
+                    // Never leave the editor pointing at a record that no longer exists.
+                    if (
+                      activeRef.current &&
+                      ids.includes(activeRef.current.id)
+                    ) {
+                      activeRef.current = undefined;
+                      setActive(undefined);
+                      unsaved.current = false;
+                      failedSave.current = false;
+                      setSaveState("Saved on device");
+                    }
+                  }}
                   onPersistence={setPersistence}
                   issues={issues}
                   integrityOpen={integrityOpen}
@@ -1224,7 +1248,11 @@ export default function App() {
             await run(async () => {
               const t = templates.find((t) => t.name === details.type);
               if (!t) throw new Error("Select a valid template.");
-              const p = projects.find((p) => p.id === details.projectId)!;
+              const p = projects.find((p) => p.id === details.projectId);
+              if (!p)
+                throw new Error(
+                  "That project is no longer available. Choose another project.",
+                );
               const r: Inspection = {
                 ...newInspection(details, t),
                 fictional: p.fictional,
@@ -1234,8 +1262,7 @@ export default function App() {
               );
               if (reportTemplate)
                 r.dailyReport = applyReportTemplate(r, reportTemplate);
-              await db.inspections.add(r);
-              activate(r);
+              activate(await addNumberedInspection(r));
               setPage("checklist");
               setNewOpen(false);
             }, "Inspection draft created.");
@@ -1260,9 +1287,23 @@ export default function App() {
             initial={active}
             onCancel={() => setDetailsOpen(false)}
             onSubmit={async (details) => {
+              const current = activeRef.current!;
+              // Numbers run per project: a draft moved to another project takes the
+              // next number there, and the user is told. Legacy records keep their id.
+              const moved =
+                current.inspectionNo && details.projectId !== current.projectId;
+              const inspectionNo = moved
+                ? await numberForProject(current, details.projectId)
+                : current.inspectionNo;
+              if (moved)
+                setNotice({
+                  message: `Inspection number changed from ${current.inspectionNo} to ${inspectionNo} because the project changed.`,
+                  error: false,
+                });
               save({
-                ...activeRef.current!,
+                ...current,
                 ...details,
+                inspectionNo,
                 fictional:
                   projects.find((p) => p.id === details.projectId)?.fictional ||
                   false,
@@ -1319,6 +1360,41 @@ export default function App() {
             }
           >
             Delete inspection
+          </Button>
+        </div>
+      </Dialog>
+      <BackupPartsDialog
+        pending={pendingBackup}
+        onClose={(message) => {
+          setPendingBackup(undefined);
+          setNotice({ message, error: message.includes("NOT") });
+        }}
+      />
+      <Dialog
+        open={!!exportConfirm}
+        onOpenChange={(v) => !v && setExportConfirm(undefined)}
+        title="Was the ZIP package saved?"
+        description="The app cannot confirm that your browser saved the file. Check your Downloads folder, then mark this inspection as Exported. Its status will not change if you choose Not yet."
+      >
+        <div className="form-actions">
+          <Button variant="outline" onClick={() => setExportConfirm(undefined)}>
+            Not yet
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                setBusy(true);
+                try {
+                  await markExported(exportConfirm!);
+                  setExportConfirm(undefined);
+                } finally {
+                  setBusy(false);
+                }
+              }, "Inspection marked as Exported.")
+            }
+          >
+            Mark as Exported
           </Button>
         </div>
       </Dialog>

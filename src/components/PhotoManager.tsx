@@ -62,7 +62,10 @@ function PhotoCard({
   onDelete: () => void;
   onPatch: (
     patch: Partial<
-      Pick<Photo, "caption" | "itemId" | "reportSection" | "reportGroup">
+      Pick<
+        Photo,
+        "caption" | "remark" | "itemId" | "reportSection" | "reportGroup"
+      >
     >,
   ) => void;
 }) {
@@ -91,6 +94,17 @@ function PhotoCard({
               onPatch({ caption: e.target.value });
             }}
             placeholder="Describe this photograph…"
+          />
+        </Field>
+        <Field label="Photo remark">
+          <textarea
+            key={photo.id}
+            rows={2}
+            maxLength={5000}
+            disabled={readonly}
+            defaultValue={photo.remark || ""}
+            onChange={(e) => onPatch({ remark: e.target.value })}
+            placeholder="Observation about this photograph (printed under it)"
           />
         </Field>
         <Field label="Report section">

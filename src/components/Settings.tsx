@@ -15,13 +15,23 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { db, deleteProject } from "../db";
+import {
+  db,
+  deleteProject,
+  findRemovableDemoData,
+  removeDemoData,
+} from "../db";
+import { useLiveQuery } from "dexie-react-hooks";
 import { importBackupDetailed } from "../backup";
-import { exportBackupFiles } from "../backup-export";
+import { exportBackupFiles, type BackupOutcome } from "../backup-export";
 import type { BackupLog } from "../storage-health";
 import { ensurePersistence, type Persistence } from "../storage-health";
 import type { IntegrityIssue } from "../integrity";
-import { IntegrityList, RecoveryButton } from "./StorageNotices";
+import {
+  BackupPartsDialog,
+  IntegrityList,
+  RecoveryButton,
+} from "./StorageNotices";
 import {
   localDate,
   projectSchema,
@@ -32,6 +42,7 @@ import {
 import { WorkspaceSettings } from "./WorkspaceSettings";
 import { Button, Dialog, Field } from "./ui";
 export function Settings({
+  onDemoRemoved,
   onPersistence,
   issues,
   integrityOpen,
@@ -45,6 +56,7 @@ export function Settings({
   canInstall,
   offlineReady,
 }: {
+  onDemoRemoved: (removedIds: string[]) => void;
   onPersistence: (p: Persistence) => void;
   issues: IntegrityIssue[];
   integrityOpen: boolean;
@@ -62,11 +74,17 @@ export function Settings({
     [deleting, setDeleting] = useState<Project>(),
     [importFiles, setImportFiles] = useState<File[]>([]),
     [backupNote, setBackupNote] = useState(""),
+    [pendingBackup, setPendingBackup] = useState<BackupOutcome["pending"]>(),
+    [demoOpen, setDemoOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [template, setTemplate] = useState<Template>(),
     [templateText, setTemplateText] = useState(""),
     [storage, setStorage] = useState(""),
     [fontName, setFontName] = useState("");
+  const demo = useLiveQuery(findRemovableDemoData, [], {
+    records: [] as string[],
+    projects: [] as string[],
+  });
   const backupInput = useRef<HTMLInputElement>(null),
     fontInput = useRef<HTMLInputElement>(null);
   const job = async (fn: () => Promise<unknown>, success?: string) => {
@@ -162,6 +180,7 @@ export function Settings({
                   onClick={() =>
                     void job(async () => {
                       const outcome = await exportBackupFiles();
+                      if (outcome.pending) setPendingBackup(outcome.pending);
                       setBackupNote(
                         outcome.message +
                           outcome.excluded
@@ -259,6 +278,32 @@ export function Settings({
               )}
             </div>
           </section>
+          {(demo.records.length > 0 || demo.projects.length > 0) && (
+            <section className="card settings-section" id="demo-data">
+              <div className="card-header">
+                <div>
+                  <h2>Demonstration data</h2>
+                  <p>
+                    Fictional starter records are still on this device (
+                    {demo.records.length} inspection
+                    {demo.records.length === 1 ? "" : "s"},{" "}
+                    {demo.projects.length} project
+                    {demo.projects.length === 1 ? "" : "s"}).
+                  </p>
+                </div>
+              </div>
+              <div className="settings-body">
+                <p className="small muted">
+                  Only records that are still exactly as supplied are removed.
+                  Anything you edited, anything with photographs, and anything
+                  you filed under a demonstration project is kept.
+                </p>
+                <Button variant="outline" onClick={() => setDemoOpen(true)}>
+                  Remove demonstration data
+                </Button>
+              </div>
+            </section>
+          )}
           <section className="card settings-section" id="data-integrity">
             <div className="card-header">
               <div>
@@ -581,6 +626,40 @@ export function Settings({
           </Button>
         </div>
       </Dialog>
+      <BackupPartsDialog
+        pending={pendingBackup}
+        onClose={(message) => {
+          setPendingBackup(undefined);
+          setBackupNote(message);
+        }}
+      />
+      <Dialog
+        open={demoOpen}
+        onOpenChange={setDemoOpen}
+        title="Remove demonstration data?"
+        description={`This permanently removes ${demo.records.length} unchanged fictional inspection(s) and ${demo.projects.length} fictional project(s). Your own records are not touched. Export a backup first if you are unsure.`}
+      >
+        <div className="form-actions">
+          <Button variant="outline" onClick={() => setDemoOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() =>
+              void job(async () => {
+                const r = await removeDemoData();
+                onDemoRemoved(r.removedIds);
+                setDemoOpen(false);
+                setBackupNote(
+                  `Removed ${r.inspections} demonstration inspection(s) and ${r.projects} project(s).`,
+                );
+              })
+            }
+          >
+            Remove demonstration data
+          </Button>
+        </div>
+      </Dialog>
       <Dialog
         open={importFiles.length > 0}
         onOpenChange={(v) => !v && setImportFiles([])}
@@ -607,6 +686,7 @@ export function Settings({
                 // Each file is atomic; stop at the first failure and say what was restored.
                 const done: string[] = [];
                 let total = 0;
+                const conflicts: string[] = [];
                 const seen = new Map<string, { n: number; of: number }>();
                 try {
                   for (const file of [...importFiles].sort((a, b) =>
@@ -614,6 +694,7 @@ export function Settings({
                   )) {
                     const r = await importBackupDetailed(file);
                     total += r.inspections;
+                    conflicts.push(...r.numberConflicts);
                     done.push(file.name);
                     if (r.volume) {
                       const v = seen.get(r.volume.id) ?? {
@@ -631,10 +712,14 @@ export function Settings({
                 }
                 setImportFiles([]);
                 const missing = [...seen.values()].filter((v) => v.n < v.of);
+                const dupes = conflicts.length
+                  ? ` Note: ${[...new Set(conflicts)].join(", ")} already existed on this device for the same project; both records were kept with the same number.`
+                  : "";
                 setBackupNote(
-                  missing.length
+                  (missing.length
                     ? `Restored ${total} inspections, but this backup has ${missing[0].of} files and only ${missing[0].n} were selected. Import the remaining part(s) too.`
-                    : `Restored ${total} inspection${total === 1 ? "" : "s"} from ${done.length} file${done.length === 1 ? "" : "s"}.`,
+                    : `Restored ${total} inspection${total === 1 ? "" : "s"} from ${done.length} file${done.length === 1 ? "" : "s"}.`) +
+                    dupes,
                 );
               }, "Backup imported successfully.")
             }

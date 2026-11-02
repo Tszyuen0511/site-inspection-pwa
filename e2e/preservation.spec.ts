@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import JSZip from "jszip";
-import { workspaceNav } from "./navigation";
+import { editorTab, workspaceNav } from "./navigation";
 import { readFile } from "node:fs/promises";
 
 const DB = "site-inspection-v1";
@@ -246,4 +246,61 @@ test("a save is blocked, not silently overwritten, when the stored record change
     .click();
   await expect(banner).toHaveCount(0);
   await expect.poll(async () => status(await find(), 1)).toBe("Pass");
+});
+
+test("Exported status is only set after the user confirms the file was saved", async ({
+  page,
+}, info) => {
+  await page.goto("./");
+  await overview(page);
+  await workspaceNav(
+    page,
+    info.project.name.startsWith("mobile") ? "Records" : "Inspection records",
+  );
+  await page.getByLabel("Search inspections").fill("SP-001");
+  await page.getByRole("button", { name: "Open SP-001", exact: true }).click();
+  const status = async () =>
+    (await rawGetAll(page, "inspections")).find(
+      (r) => r.id === "INSP-DEMO-0001",
+    ).status;
+  expect(await status()).toBe("Completed");
+  await editorTab(page, "Report");
+  for (const choice of ["Not yet", "Mark as Exported"]) {
+    const pending = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export ZIP", exact: true }).click();
+    await pending;
+    const dialog = page.getByRole("dialog", {
+      name: "Was the ZIP package saved?",
+    });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: choice, exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    if (choice === "Not yet") expect(await status()).toBe("Completed");
+  }
+  await expect.poll(status).toBe("Exported");
+});
+
+test("demonstration data can be removed without touching anything else", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await overview(page);
+  await workspaceNav(page, "Settings");
+  await page
+    .getByRole("button", { name: "Remove demonstration data", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Remove demonstration data?",
+  });
+  await dialog
+    .getByRole("button", { name: "Remove demonstration data" })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(async () => (await rawGetAll(page, "inspections")).length)
+    .toBe(0);
+  await expect(page.locator("#demo-data")).toHaveCount(0);
+  await page.reload();
+  await overview(page);
+  expect((await rawGetAll(page, "inspections")).length).toBe(0); // not re-seeded
 });

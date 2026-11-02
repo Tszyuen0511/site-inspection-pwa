@@ -38,6 +38,7 @@ export function photoMetadata(photos: Photo[]) {
     inspectionId: p.inspectionId,
     itemId: p.itemId,
     caption: p.caption,
+    remark: p.remark || "",
     order: i,
     number: photoNumber(i),
     name: p.name,
@@ -59,7 +60,13 @@ export async function generatePDF(
   const content =
     JSON.stringify(record) +
     JSON.stringify(
-      photos.map((p) => [p.name, p.caption, p.reportGroup, p.reportSection]),
+      photos.map((p) => [
+        p.name,
+        p.caption,
+        p.remark,
+        p.reportGroup,
+        p.reportSection,
+      ]),
     );
   if (!fontBase64 && /[^\u0000-\u00ff]/.test(content))
     throw new Error(

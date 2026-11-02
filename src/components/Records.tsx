@@ -10,7 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import type { Inspection, Project } from "../domain";
+import { displayNo, type Inspection, type Project } from "../domain";
 import { Button, StatusBadge } from "./ui";
 import { formatDate } from "./Dashboard";
 export function Records({
@@ -43,7 +43,14 @@ export function Records({
     .filter(
       (r) =>
         (!search ||
-          [r.id, r.projectName, r.element, r.inspector, r.location]
+          [
+            r.id,
+            r.inspectionNo,
+            r.projectName,
+            r.element,
+            r.inspector,
+            r.location,
+          ]
             .join(" ")
             .toLowerCase()
             .includes(search.toLowerCase())) &&
@@ -159,7 +166,7 @@ export function Records({
                     {r.element} <span className="record-type">{r.type}</span>
                   </strong>
                   <small>{r.projectName}</small>
-                  <small className="mono record-id">{r.id}</small>
+                  <small className="mono record-id">{displayNo(r)}</small>
                 </span>
               </button>
               <div className="record-metadata">

@@ -189,6 +189,27 @@ export function ItemPhotos({
         </div>
       )}
       {current && (
+        <div className="inline-caption inline-remark">
+          <Field
+            label={`Photo remark for ${photoNumber(sorted.indexOf(current))}`}
+          >
+            <input
+              key={current.id}
+              defaultValue={current.remark || ""}
+              disabled={readOnly}
+              maxLength={5000}
+              placeholder="[Observation about this photograph]"
+              onChange={(e) => {
+                const remark = e.target.value;
+                void run(() =>
+                  edit(() => db.photos.update(current.id, { remark })),
+                );
+              }}
+            />
+          </Field>
+        </div>
+      )}
+      {current && (
         <Dialog
           open={preview}
           onOpenChange={setPreview}

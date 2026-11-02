@@ -4,6 +4,8 @@ import {
   newInspection,
   templates,
   validationIssues,
+  formatInspectionNo,
+  inspectionCode,
   type Inspection,
   type StoredPhoto,
   type Project,
@@ -61,6 +63,7 @@ export async function seed() {
         ["PP-006", "Pipe Pile", "Draft", "2026-10-28"],
       ] as const;
       const fingerprints: Record<string, string> = {};
+      const counters: Record<string, number> = {};
       for (const [n, spec] of specs.entries()) {
         const [element, type, status, date] = spec,
           project = projects[n === 4 ? 1 : 0],
@@ -87,6 +90,10 @@ export async function seed() {
           template,
         );
         record.id = `INSP-DEMO-${String(n + 1).padStart(4, "0")}`;
+        const code = inspectionCode(type),
+          scope = `${project.id}:${code}`;
+        counters[scope] = (counters[scope] || 0) + 1;
+        record.inspectionNo = formatInspectionNo(code, counters[scope]);
         record.status = status;
         record.fictional = true;
         record.updatedAt = `${date}T09:30:00.000Z`;
@@ -129,6 +136,119 @@ export async function seed() {
     },
   );
 }
+const parseMap = (raw?: string) => {
+  try {
+    return JSON.parse(raw || "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+};
+/**
+ * Only demonstration records that are still byte-for-byte what was seeded, with no
+ * photographs, qualify. Anything the user edited, or any real work filed under a
+ * demonstration project, is never touched.
+ */
+async function removableDemo() {
+  const seeded = parseMap((await db.meta.get("seedRecords"))?.value);
+  const records: string[] = [];
+  for (const [id, fingerprint] of Object.entries(seeded)) {
+    const row = await db.inspections.get(id);
+    if (
+      row &&
+      JSON.stringify(row) === fingerprint &&
+      !(await db.photos.where("inspectionId").equals(id).count())
+    )
+      records.push(id);
+  }
+  const seededProjects = parseMap((await db.meta.get("seedProjects"))?.value);
+  const projects: string[] = [];
+  for (const [id, fingerprint] of Object.entries(seededProjects)) {
+    const row = await db.projects.get(id);
+    if (!row || JSON.stringify(row) !== fingerprint) continue;
+    const users = await db.inspections
+      .where("projectId")
+      .equals(id)
+      .primaryKeys();
+    if (users.every((k) => records.includes(String(k)))) projects.push(id);
+  }
+  return { records, projects };
+}
+export async function findRemovableDemoData() {
+  return db.transaction(
+    "r",
+    [db.projects, db.inspections, db.photos, db.meta],
+    removableDemo,
+  );
+}
+export async function removeDemoData() {
+  return db.transaction(
+    "rw",
+    [db.projects, db.inspections, db.photos, db.meta],
+    async () => {
+      const { records, projects } = await removableDemo();
+      await db.inspections.bulkDelete(records);
+      await db.projects.bulkDelete(projects);
+      const workspace = await loadWorkspace();
+      if (
+        workspace.defaultProjectId &&
+        projects.includes(workspace.defaultProjectId)
+      ) {
+        delete workspace.defaultProjectId;
+        await saveWorkspace(workspace);
+      }
+      return {
+        inspections: records.length,
+        projects: projects.length,
+        removedIds: records,
+      };
+    },
+  );
+}
+const seqKey = (projectId: string, code: string) =>
+  `inspection-seq:${projectId}:${code}`;
+/**
+ * Reserves the next inspection number for a project and type. The highest number
+ * ever issued is kept in meta, so a number is never handed out twice on this
+ * device, even after the record that held it is deleted. Must run inside a
+ * read-write transaction on inspections + meta.
+ */
+async function reserveNumber(projectId: string, typeName: string) {
+  const code = inspectionCode(typeName);
+  const pattern = new RegExp(`^INSP-${code}-(\\d+)$`);
+  let max = Number((await db.meta.get(seqKey(projectId, code)))?.value) || 0;
+  await db.inspections
+    .where("projectId")
+    .equals(projectId)
+    .each((r) => {
+      const m = pattern.exec(r.inspectionNo || "");
+      if (m) max = Math.max(max, Number(m[1]));
+    });
+  await db.meta.put({ key: seqKey(projectId, code), value: String(max + 1) });
+  return formatInspectionNo(code, max + 1);
+}
+/** Adds a new inspection with the next number for its project and type. */
+export async function addNumberedInspection(record: Inspection) {
+  return db.transaction("rw", db.inspections, db.meta, async () => {
+    const numbered = {
+      ...record,
+      inspectionNo: await reserveNumber(
+        record.projectId,
+        record.template.name || record.type,
+      ),
+    };
+    await db.inspections.add(numbered);
+    return numbered;
+  });
+}
+/**
+ * Numbers are per project, so a draft moved to another project gets the next
+ * number there. Only used for that explicit user action; never automatic.
+ */
+export async function numberForProject(record: Inspection, projectId: string) {
+  return db.transaction("rw", db.inspections, db.meta, () =>
+    reserveNumber(projectId, record.template.name || record.type),
+  );
+}
 export async function deleteInspection(id: string) {
   await db.transaction("rw", db.inspections, db.photos, async () => {
     await db.photos.where("inspectionId").equals(id).delete();
@@ -158,8 +278,7 @@ export async function repeatInspection(source: Inspection) {
     source.template,
   );
   record.fictional = source.fictional;
-  await db.inspections.add(record);
-  return record;
+  return addNumberedInspection(record);
 }
 // Never throws on a damaged workspace row: the app must still open so the user can
 // recover. The row itself is left untouched and reported by scanStoredData().
