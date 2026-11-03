@@ -131,8 +131,8 @@ export function Report({
         )}
       </div>
       <p className="small muted report-note">
-        Recorded observations only. Completion does not represent formal review,
-        signature or approval.
+        Recorded observations only. This report is not a formal review or
+        approval.
       </p>
     </>
   );

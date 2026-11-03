@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import {
   ArchiveRestore,
   Check,
+  Database,
   Download,
   FolderPlus,
   HardDrive,
@@ -43,6 +44,7 @@ import { Button, Dialog, Field } from "./ui";
 export function Settings({
   onDemoRemoved,
   onPersistence,
+  onOpenStorage,
   issues,
   integrityOpen,
   backupLog,
@@ -57,6 +59,7 @@ export function Settings({
 }: {
   onDemoRemoved: (removedIds: string[]) => void;
   onPersistence: (p: Persistence) => void;
+  onOpenStorage: () => void;
   issues: IntegrityIssue[];
   integrityOpen: boolean;
   backupLog?: BackupLog;
@@ -275,6 +278,21 @@ export function Settings({
               )}
             </div>
           </section>
+          <section className="card settings-section" id="storage-manager">
+            <div className="card-header">
+              <div>
+                <h2>Storage manager</h2>
+                <p>
+                  See how much space records, photographs and drawings use, by
+                  project, and check storage health.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={onOpenStorage}>
+                <Database size={16} />
+                Open storage manager
+              </Button>
+            </div>
+          </section>
           {(demo.records.length > 0 || demo.projects.length > 0) && (
             <section className="card settings-section" id="demo-data">
               <div className="card-header">
@@ -477,9 +495,8 @@ export function Settings({
           <div className="subtle-note">
             <ShieldCheck size={20} />
             <span>
-              No accounts, cloud storage, analytics or telemetry. Optional
-              weather requests send coordinates to MET Norway only with your
-              consent. Report processing happens in your browser.
+              No accounts, cloud storage, analytics or telemetry. Report
+              processing happens in your browser.
             </span>
           </div>
         </aside>

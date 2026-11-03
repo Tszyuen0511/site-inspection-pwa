@@ -50,30 +50,27 @@ test("create, autosave, resume, validate, photos, PDF, ZIP and offline", async (
   ).toBeVisible();
   await page.getByRole("button", { name: "Details", exact: true }).click();
   await page
-    .getByLabel("General remarks", { exact: true })
-    .fill("Updated details are retained.");
+    .getByLabel("Drawing / specification reference", { exact: true })
+    .fill("DWG-UPDATED");
   await page.getByRole("button", { name: "Save details", exact: true }).click();
   await expect(
     page.getByRole("dialog", { name: "Inspection details", exact: true }),
   ).not.toBeVisible();
-  await page
-    .getByRole("button", { name: "Complete inspection", exact: true })
-    .click();
-  await expect(page.getByRole("alert")).toContainText(
-    "select an inspection status",
-  );
-  await page.getByLabel("Dismiss notification").click();
+  // Sign-off has been removed: there is no completion step or signature.
+  await expect(
+    page.getByRole("button", { name: "Complete inspection", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Sign-off" })).toHaveCount(0);
   for (let index = 1; index < 7; index++) {
     const section = page.locator(".checklist-item").nth(index);
     await section
       .getByRole("button", { name: index === 6 ? "Fail" : "Pass", exact: true })
       .click();
   }
-  await page
-    .getByRole("button", { name: "Complete inspection", exact: true })
-    .click();
-  await expect(page.locator(".toast-error")).toContainText("remark");
-  await page.getByLabel("Dismiss notification").click();
+  // A failed item still asks for a remark.
+  await expect(
+    page.getByText("Add a remark describing the failure."),
+  ).toBeVisible();
   await page
     .getByLabel("Remarks * (required for failed items)")
     .fill("Recorded observation requires follow-up.");
@@ -89,13 +86,6 @@ test("create, autosave, resume, validate, photos, PDF, ZIP and offline", async (
     page.getByRole("dialog", { name: "Full-screen photograph" }),
   ).toBeVisible();
   await page.getByLabel("Close photograph").click();
-  await editorTab(page, "Checklist");
-  await page
-    .getByRole("button", { name: "Complete inspection", exact: true })
-    .click();
-  await expect(
-    page.locator(".header-identity").getByRole("status"),
-  ).toContainText("Completed");
   await editorTab(page, "Report");
   await expect(
     page.getByRole("region", { name: "Inspection PDF preview" }),

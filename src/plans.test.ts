@@ -20,9 +20,12 @@ import {
   addDrawing,
   deleteAnnotation,
   deleteDrawing,
+  locationRegion,
   reportPages,
+  setLocationRegion,
   updateAnnotation,
 } from "./drawings";
+import { toDrawing, toViewer } from "./plan-view";
 import { legendRows, markLabels, suffix } from "./plan-labels";
 import { createBackupVolumes, importBackup, readBackup } from "./backup";
 import { generatePackage, generatePDF } from "./export";
@@ -240,19 +243,6 @@ describe("drawing and annotation storage", () => {
     // The source is untouched.
     expect(await db.annotations.get(m.id)).toEqual(m);
   });
-  it("prints every marked page, and page 1 of an unmarked drawing", async () => {
-    const r = await setup();
-    const a = await drawing(r, 4, "a.pdf"),
-      b = await drawing(r);
-    const m1 = await mark(r, a, "toe-level", 3);
-    const m2 = await mark(r, a, "toe-level", 1);
-    const pages = reportPages([a, b], [m1, m2] as Annotation[]);
-    expect(pages.map((p) => [p.drawing.id, p.page])).toEqual([
-      [a.id, 1],
-      [a.id, 3],
-      [b.id, 1],
-    ]);
-  });
 });
 
 describe("plans in backups", () => {
@@ -337,131 +327,7 @@ describe("plans in backups", () => {
   });
 });
 
-describe("plans in the PDF report and ZIP", () => {
-  const plansFor = async (r: Inspection, landscape = true) => {
-    const drawings = await db.drawings.toArray(),
-      annotations = await db.annotations.toArray();
-    const jpeg = new Uint8Array(readFileSync("src/test-image.jpg"));
-    return {
-      drawings,
-      annotations,
-      pages: reportPages(drawings, annotations).map(({ drawing, page }) => ({
-        drawing,
-        page,
-        jpeg,
-        width: landscape ? 1600 : 1000,
-        height: landscape ? 1000 : 1600,
-      })),
-    };
-  };
-  it("adds a plan page with marks, drawing details and the legend, turning a landscape drawing to fill a portrait page", async () => {
-    const r = await setup();
-    const d = await drawing(r, 3, "set.pdf");
-    await db.drawings.update(d.id, {
-      title: "Site layout",
-      number: "DWG-101",
-      revision: "B",
-    });
-    const [i1, i2] = r.template.items;
-    await mark(r, d, i1.id, 2, 0.2);
-    await mark(r, d, i1.id, 2, 0.4);
-    await mark(r, d, i2.id, 2, 0.6);
-    r.responses[i2.id].status = "Fail";
-    r.responses[i2.id].remarks = "Defect";
-    const pdf = await (
-      await generatePDF(r, [], undefined, await plansFor(r))
-    ).text();
-    expect(pdf).not.toMatch(/\/MediaBox \[0 0 841\.8\d* 595\.2\d*\]/);
-    expect(pdf).toContain("turn the page clockwise to read it");
-    for (const t of [
-      "Location Plan",
-      "Site layout",
-      "DWG-101",
-      "Rev. B",
-      "Source page 2 of 3",
-      "(1A)",
-      "(1B)",
-      "(2)",
-      "Legend - Drawing 1, page 2",
-      "Fail",
-    ])
-      expect(pdf).toContain(t);
-    expect(pdf).toContain("4.   Site Photos");
-  });
-  it("uses bracketed placeholders for missing drawing details and keeps the report valid without plans", async () => {
-    const r = await setup();
-    await drawing(r);
-    const pdf = await (
-      await generatePDF(r, [], undefined, await plansFor(r, false))
-    ).text();
-    expect(pdf).toContain("[Drawing title]");
-    expect(pdf).toContain("No marked locations on this page.");
-    const plain = await (await generatePDF(r, [])).text();
-    expect(plain).not.toContain("Location Plan");
-    expect(plain).toContain("3.   Site Photos");
-  });
-  it("puts a long legend on its own page instead of shrinking the drawing", async () => {
-    const r = await setup();
-    const d = await drawing(r);
-    for (let n = 0; n < 40; n++)
-      await mark(r, d, r.template.items[n % 7].id, 1, (n + 1) / 42);
-    const pdf = await (
-      await generatePDF(r, [], undefined, await plansFor(r))
-    ).text();
-    expect(pdf).toContain("Legend continues on the next page.");
-    expect(pdf).toContain("(1F)");
-    expect(pdf).toContain("(7E)");
-  });
-  it("includes original drawings and labelled annotations in the inspection ZIP", async () => {
-    const r = await setup();
-    const d = await drawing(r);
-    const m = await mark(r, d, "toe-level");
-    const plans = await plansFor(r);
-    const zip = await JSZip.loadAsync(
-      await (
-        await generatePackage(r, [], undefined, plans, [
-          { drawing: d, bytes: PNG.slice().buffer },
-        ])
-      ).arrayBuffer(),
-    );
-    const base = packageName(r);
-    const data = JSON.parse(
-      await zip.file(`${base}/Inspection_Data.json`)!.async("string"),
-    );
-    expect(data.drawings[0].path).toMatch(/^Drawings\/D1_/);
-    expect(
-      new Uint8Array(
-        await zip.file(`${base}/${data.drawings[0].path}`)!.async("uint8array"),
-      ),
-    ).toEqual(PNG);
-    const index = r.template.items.findIndex((i) => i.id === "toe-level") + 1;
-    expect(data.annotations).toEqual([{ ...m, label: String(index) }]);
-  });
-});
-
 describe("review regressions", () => {
-  it("keeps every page portrait, including a landscape drawing's plan page", async () => {
-    const r = await setup();
-    const d = await drawing(r);
-    for (let n = 0; n < 40; n++)
-      await mark(r, d, r.template.items[n % 7].id, 1, (n + 1) / 42);
-    const drawings = await db.drawings.toArray(),
-      annotations = await db.annotations.toArray();
-    const jpeg = new Uint8Array(readFileSync("src/test-image.jpg"));
-    const pdf = await (
-      await generatePDF(r, [], undefined, {
-        drawings,
-        annotations,
-        pages: [{ drawing: d, page: 1, jpeg, width: 1600, height: 1000 }],
-      })
-    ).text();
-    const boxes = [
-      ...pdf.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g),
-    ].map((m) => (Number(m[1]) > Number(m[2]) ? "L" : "P"));
-    // Every page, including the plan page, is portrait.
-    expect(boxes.every((b) => b === "P")).toBe(true);
-    expect(boxes.length).toBeGreaterThanOrEqual(4);
-  });
   it("does not let an unprinted non-Latin file name block the PDF", async () => {
     const r = await setup();
     const d = await drawing(r, 1, "图纸.png");
@@ -509,64 +375,250 @@ describe("review regressions", () => {
   });
 });
 
-describe("turned plan drawings", () => {
-  it("places marks on the turned drawing: top-right goes to top-left, top-left to bottom-left", async () => {
+// ---- One location region per inspection --------------------------------------
+const placeRegion = (
+  r: Inspection,
+  d: Drawing,
+  a = { x: 0.25, y: 0.25 },
+  b = { x: 0.5, y: 0.5 },
+  page = 1,
+) => setLocationRegion({ inspectionId: r.id, drawingId: d.id, page, a, b });
+const RED_STROKE = "0.86 0.15 0.15 RG";
+/** Rectangles drawn after a stroke colour, as [x, y, w, h] in PDF points. */
+const rectsAfter = (pdf: string, colour: string) =>
+  [
+    ...pdf.matchAll(
+      new RegExp(
+        `${colour.replace(/\./g, "\\.")}[\\s\\S]*?([\\d.-]+) ([\\d.-]+) ([\\d.-]+) ([\\d.-]+) re`,
+        "g",
+      ),
+    ),
+  ].map((m) => m.slice(1, 5).map(Number));
+const jpeg = () => new Uint8Array(readFileSync("src/test-image.jpg"));
+const reportPlans = async (width = 1600, height = 1000) => {
+  const drawings = await db.drawings.toArray(),
+    annotations = await db.annotations.toArray();
+  return {
+    drawings,
+    annotations,
+    pages: reportPages(drawings, annotations).map(({ drawing, page }) => ({
+      drawing,
+      page,
+      jpeg: jpeg(),
+      width,
+      height,
+    })),
+  };
+};
+
+describe("location region", () => {
+  it("keeps only one region per inspection; a new region replaces the old one", async () => {
     const r = await setup();
-    const d = await drawing(r);
-    const [i1, i2] = r.template.items;
-    await addAnnotation({
-      inspectionId: r.id,
-      drawingId: d.id,
-      page: 1,
-      kind: "marker",
-      itemId: i1.id,
-      x: 0.02,
-      y: 0.02,
+    const a = await drawing(r, 3, "a.pdf"),
+      b = await drawing(r);
+    const first = await placeRegion(
+      r,
+      a,
+      { x: 0.6, y: 0.7 },
+      { x: 0.1, y: 0.2 },
+      2,
+    );
+    // Stored normalised: top-left first, drawing-relative.
+    expect(first).toMatchObject({
+      kind: "region",
+      page: 2,
+      x: 0.1,
+      y: 0.2,
+      x2: 0.6,
+      y2: 0.7,
     });
-    await addAnnotation({
-      inspectionId: r.id,
-      drawingId: d.id,
-      page: 1,
-      kind: "marker",
-      itemId: i2.id,
-      x: 0.98,
-      y: 0.02,
-    });
-    const jpeg = new Uint8Array(readFileSync("src/test-image.jpg"));
-    const pdf = await (
-      await generatePDF(r, [], undefined, {
-        drawings: [d],
-        annotations: await db.annotations.toArray(),
-        pages: [{ drawing: d, page: 1, jpeg, width: 1600, height: 1000 }],
-      })
-    ).text();
-    // Label positions in PDF points (y grows upwards).
-    const at = (label: string) => {
-      // Only the plan page: the checklist table also prints "1" and "2".
-      const plan = pdf.slice(pdf.indexOf("Location Plan"));
-      const m = new RegExp(`([\\d.]+) ([\\d.]+) Td\\s*\\(${label}\\) Tj`).exec(
-        plan,
-      )!;
-      return { x: Number(m[1]), y: Number(m[2]) };
-    };
-    const topLeft = at("1"),
-      topRight = at("2");
-    // Same column (both on the drawing's top edge, now the left edge)...
-    expect(Math.abs(topLeft.x - topRight.x)).toBeLessThan(15);
-    // ...with the drawing's top-left corner now near the bottom of the box.
-    expect(topRight.y - topLeft.y).toBeGreaterThan(200);
+    expect(first.itemId).toBeUndefined();
+    const second = await placeRegion(r, b);
+    const stored = await db.annotations.toArray();
+    expect(stored.filter((x) => x.kind === "region")).toEqual([second]);
+    expect(locationRegion(stored)?.id).toBe(second.id);
   });
-  it("keeps a portrait drawing upright", async () => {
+  it("leaves legacy marks stored but unused, and can be moved or removed", async () => {
     const r = await setup();
     const d = await drawing(r);
-    const jpeg = new Uint8Array(readFileSync("src/test-image.jpg"));
+    const legacy = await mark(r, d, "toe-level");
+    const region = await placeRegion(r, d);
+    await updateAnnotation(region, { x: 0.3, y: 0.3, x2: 0.55, y2: 0.55 });
+    expect(await db.annotations.get(region.id)).toMatchObject({
+      x: 0.3,
+      x2: 0.55,
+    });
+    await deleteAnnotation((await db.annotations.get(region.id))!);
+    expect(locationRegion(await db.annotations.toArray())).toBeUndefined();
+    expect(await db.annotations.get(legacy.id)).toEqual(legacy);
+  });
+  it("refuses region changes on a completed inspection", async () => {
+    const r = await setup();
+    const d = await drawing(r);
+    await db.inspections.update(r.id, { status: "Completed" });
+    await expect(placeRegion(r, d)).rejects.toThrow("read-only");
+  });
+  it("prints only the region's page, or page 1 of each drawing without a region", async () => {
+    const r = await setup();
+    const a = await drawing(r, 4, "a.pdf"),
+      b = await drawing(r);
+    const m1 = await mark(r, a, "toe-level", 3);
+    // Legacy marks no longer select pages.
+    expect(
+      reportPages([a, b], [m1]).map((p) => [p.drawing.id, p.page]),
+    ).toEqual([
+      [a.id, 1],
+      [b.id, 1],
+    ]);
+    const region = await placeRegion(r, a, undefined, undefined, 3);
+    expect(
+      reportPages([a, b], [m1, region]).map((p) => [p.drawing.id, p.page]),
+    ).toEqual([[a.id, 3]]);
+  });
+  it("round-trips the region through backup and restore", async () => {
+    const r = await setup();
+    const d = await drawing(r);
+    const region = await placeRegion(r, d);
+    const { files } = await createBackupVolumes();
+    await wipe();
+    await importBackup(files[0].blob);
+    expect(await db.annotations.get(region.id)).toEqual(region);
+  });
+  it("keeps its drawing position at any zoom or pan in the viewer", () => {
+    const image = { width: 1200, height: 800 };
+    const corner = { x: 0.25, y: 0.4 };
+    for (const view of [
+      { scale: 0.3, x: 10, y: 20 },
+      { scale: 1, x: -250, y: 40 },
+      { scale: 4.5, x: -2000, y: -900 },
+    ]) {
+      const onScreen = toViewer(corner.x, corner.y, view, image);
+      const back = toDrawing(onScreen, view, image);
+      expect(back.x).toBeCloseTo(corner.x, 10);
+      expect(back.y).toBeCloseTo(corner.y, 10);
+    }
+    // A point dragged off the drawing is clamped to its edge.
+    expect(
+      toDrawing({ x: -50, y: 5000 }, { scale: 1, x: 0, y: 0 }, image),
+    ).toEqual({ x: 0, y: 1 });
+  });
+});
+
+describe("plans in the PDF report and ZIP", () => {
+  it("prints the region in red on a landscape page with drawing details and no legend", async () => {
+    const r = await setup();
+    const d = await drawing(r, 3, "set.pdf");
+    await db.drawings.update(d.id, {
+      title: "Site layout",
+      number: "DWG-101",
+      revision: "B",
+    });
+    await mark(r, d, r.template.items[0].id, 2, 0.2);
+    await placeRegion(r, d, { x: 0.25, y: 0.25 }, { x: 0.5, y: 0.5 }, 2);
     const pdf = await (
-      await generatePDF(r, [], undefined, {
-        drawings: [d],
-        annotations: [],
-        pages: [{ drawing: d, page: 1, jpeg, width: 1000, height: 1400 }],
-      })
+      await generatePDF(r, [], undefined, await reportPlans())
     ).text();
-    expect(pdf).not.toContain("turn the page clockwise");
+    // The landscape drawing gets a landscape page instead of being turned.
+    expect(pdf).toMatch(/\/MediaBox \[0 0 841\.8\d* 595\.2\d*\]/);
+    for (const t of [
+      "3.   Location Plan",
+      "Site layout",
+      "DWG-101",
+      "Rev. B",
+      "Page 2 of 3",
+      "4.   Photographic Records",
+      RED_STROKE,
+    ])
+      expect(pdf).toContain(t);
+    for (const t of [
+      "turn the page clockwise",
+      "No marked locations",
+      "Legend",
+      "\\(1\\) Tj",
+      "Checklist item",
+    ])
+      expect(pdf).not.toContain(t);
+  });
+  it("draws the region at its drawing-relative position on the printed drawing", async () => {
+    for (const [w, h] of [
+      [1600, 1000],
+      [800, 500],
+      [1000, 1600],
+    ]) {
+      await wipe();
+      const r = await setup();
+      const d = await drawing(r);
+      await placeRegion(r, d, { x: 0.25, y: 0.4 }, { x: 0.5, y: 0.8 });
+      const pdf = await (
+        await generatePDF(r, [], undefined, await reportPlans(w, h))
+      ).text();
+      const plan = pdf.slice(pdf.indexOf("Location Plan"));
+      // The drawing's border: the 0.25 mm rectangle drawn right after the image.
+      const box = /0\.70866\d* w\s*([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+) re/
+        .exec(plan)!
+        .slice(1, 5)
+        .map(Number);
+      const region = rectsAfter(plan, RED_STROKE)[0];
+      const u = (region[0] - box[0]) / box[2],
+        v = (box[1] - region[1]) / -box[3],
+        rw = region[2] / box[2],
+        rh = region[3] / box[3];
+      expect(u).toBeCloseTo(0.25, 2);
+      expect(v).toBeCloseTo(0.4, 2);
+      expect(rw).toBeCloseTo(0.25, 2);
+      expect(rh).toBeCloseTo(0.4, 2);
+    }
+  });
+  it("uses bracketed placeholders for missing drawing details and keeps the report valid without plans", async () => {
+    const r = await setup();
+    await drawing(r);
+    const pdf = await (
+      await generatePDF(r, [], undefined, await reportPlans(1000, 1600))
+    ).text();
+    expect(pdf).toContain("[Drawing title]");
+    expect(pdf).not.toContain("No marked locations");
+    expect(pdf).not.toContain(RED_STROKE);
+    const plain = await (await generatePDF(r, [])).text();
+    expect(plain).not.toContain("Location Plan");
+    expect(plain).toContain("3.   Photographic Records");
+  });
+  it("always prints the location plan on a landscape page between portrait pages", async () => {
+    const r = await setup();
+    const d = await drawing(r);
+    await placeRegion(r, d);
+    const orientation = async (w: number, h: number) =>
+      [
+        ...(
+          await (
+            await generatePDF(r, [], undefined, await reportPlans(w, h))
+          ).text()
+        ).matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g),
+      ].map((m) => (Number(m[1]) > Number(m[2]) ? "L" : "P"));
+    expect(await orientation(1000, 1400)).toEqual(["P", "L", "P"]);
+    expect(await orientation(1600, 1000)).toEqual(["P", "L", "P"]);
+  });
+  it("includes original drawings and the region in the inspection ZIP", async () => {
+    const r = await setup();
+    const d = await drawing(r);
+    const region = await placeRegion(r, d);
+    const plans = await reportPlans();
+    const zip = await JSZip.loadAsync(
+      await (
+        await generatePackage(r, [], undefined, plans, [
+          { drawing: d, bytes: PNG.slice().buffer },
+        ])
+      ).arrayBuffer(),
+    );
+    const base = packageName(r);
+    const data = JSON.parse(
+      await zip.file(`${base}/Inspection_Data.json`)!.async("string"),
+    );
+    expect(data.drawings[0].path).toMatch(/^Drawings\/D1_/);
+    expect(
+      new Uint8Array(
+        await zip.file(`${base}/${data.drawings[0].path}`)!.async("uint8array"),
+      ),
+    ).toEqual(PNG);
+    expect(data.annotations).toEqual([{ ...region, label: "" }]);
   });
 });

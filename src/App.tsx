@@ -31,7 +31,6 @@ import {
   repeatInspection,
   addNumberedInspection,
   numberForProject,
-  finalize,
   inspectionContentKey,
   SaveConflictError,
   saveIfUnchanged,
@@ -72,12 +71,19 @@ import {
   StorageLossBanner,
 } from "./components/StorageNotices";
 import { Settings } from "./components/Settings";
+import { StorageManager } from "./components/StorageManager";
 import { Report } from "./components/Report";
 import { generatePackage, generatePDF, download, loadFont } from "./export";
 import { wspLogo } from "./brand-assets";
 import { fromStoredPhoto, listPhotoViews } from "./photos";
 type Page =
-  "records" | "checklist" | "photos" | "plans" | "report" | "settings";
+  | "records"
+  | "checklist"
+  | "photos"
+  | "plans"
+  | "report"
+  | "settings"
+  | "storage";
 interface InstallEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: string }>;
@@ -437,10 +443,14 @@ export default function App() {
   useEffect(() => {
     const current = activeRef.current;
     const stored = records.find((r) => r.id === current?.id);
+    // Adopt the stored version only when it is at least as new as this editor's
+    // own last save: a live-query result can arrive late, after newer saves have
+    // already landed, and must never roll the editor back to it.
     if (
       stored &&
       current &&
       !unsaved.current &&
+      stored.updatedAt >= current.updatedAt &&
       (stored.updatedAt > current.updatedAt ||
         inspectionContentKey(stored) !== baseKey.current)
     ) {
@@ -538,17 +548,6 @@ export default function App() {
               <FileText size={19} />
               Report
             </button>
-            <button
-              className={
-                page === "checklist" && editorSection === "sign-off"
-                  ? "active"
-                  : ""
-              }
-              onClick={() => void jumpTo("sign-off")}
-            >
-              <CheckCircle2 size={19} />
-              Sign-off
-            </button>
           </nav>
         )}
         <nav
@@ -606,7 +605,9 @@ export default function App() {
           </div>
           <button
             className={
-              page === "settings" ? "sidebar-setting active" : "sidebar-setting"
+              page === "settings" || page === "storage"
+                ? "sidebar-setting active"
+                : "sidebar-setting"
             }
             onClick={() => void navigate("settings")}
           >
@@ -652,7 +653,9 @@ export default function App() {
                     ? "Photographs"
                     : page === "report"
                       ? "Report preview"
-                      : "Settings"}
+                      : page === "storage"
+                        ? "Storage manager"
+                        : "Settings"}
             </strong>
           </div>
           <div className="topbar-actions">
@@ -959,14 +962,6 @@ export default function App() {
                       }
                     })
                   }
-                  onComplete={() =>
-                    void run(async () => {
-                      if (!(await flush())) return;
-                      activate(
-                        await finalize(activeRef.current!, baseKey.current),
-                      );
-                    }, "Inspection completed. This does not represent formal approval.")
-                  }
                   onReopen={() =>
                     save({
                       ...active,
@@ -977,13 +972,7 @@ export default function App() {
                 />
               )}
               {page === "plans" && active && (
-                <Plans
-                  key={active.id}
-                  record={active}
-                  photos={selectedPhotos}
-                  run={runPhoto}
-                  onOpenItem={(id) => void jumpTo(`item-${id}`)}
-                />
+                <Plans key={active.id} record={active} run={runPhoto} />
               )}
               {page === "photos" && active && (
                 <PhotoManager
@@ -1028,6 +1017,7 @@ export default function App() {
                     }
                   }}
                   onPersistence={setPersistence}
+                  onOpenStorage={() => void navigate("storage")}
                   issues={issues}
                   integrityOpen={integrityOpen}
                   backupLog={backupLog}
@@ -1045,6 +1035,12 @@ export default function App() {
                       setInstallEvent(undefined);
                     })
                   }
+                />
+              )}
+              {page === "storage" && (
+                <StorageManager
+                  onBack={() => void navigate("settings")}
+                  onPersistence={setPersistence}
                 />
               )}
             </>
@@ -1074,7 +1070,9 @@ export default function App() {
               (id === "new" ? "mobile-add" : "")
             }
             aria-current={
-              page === id || (id === "records" && page === "checklist")
+              page === id ||
+              (id === "records" && page === "checklist") ||
+              (id === "settings" && page === "storage")
                 ? "page"
                 : undefined
             }
@@ -1142,9 +1140,6 @@ export default function App() {
                 }}
               >
                 Report
-              </Button>
-              <Button variant="ghost" onClick={() => void jumpTo("sign-off")}>
-                Sign-off
               </Button>
             </>
           )}
@@ -1240,18 +1235,13 @@ export default function App() {
             onCancel={() => setDetailsOpen(false)}
             onSubmit={async (details) => {
               const current = activeRef.current!;
-              // Numbers run per project: a draft moved to another project takes the
-              // next number there, and the user is told. Legacy records keep their id.
+              // The displayed number comes from the element name (displayNo). The
+              // stored sequence number is still kept per project as a fallback.
               const moved =
                 current.inspectionNo && details.projectId !== current.projectId;
               const inspectionNo = moved
                 ? await numberForProject(current, details.projectId)
                 : current.inspectionNo;
-              if (moved)
-                setNotice({
-                  message: `Inspection number changed from ${current.inspectionNo} to ${inspectionNo} because the project changed.`,
-                  error: false,
-                });
               save({
                 ...current,
                 ...details,
@@ -1274,7 +1264,6 @@ export default function App() {
                 ["Location", active.location],
                 ["Date / time", active.date + " / " + active.time],
                 ["Drawing", active.drawing],
-                ["General remarks", active.remarks],
               ].map(([k, v]) => (
                 <div key={k}>
                   <dt>{k}</dt>

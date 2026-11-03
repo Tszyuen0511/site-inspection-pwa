@@ -163,13 +163,6 @@ export function InspectionForm({
           placeholder="[Drawing number and revision]"
         />
       </Field>
-      <Field label="General remarks" error={errors.remarks?.message}>
-        <textarea
-          {...register("remarks")}
-          rows={3}
-          placeholder="[Site observations and outstanding issues]"
-        />
-      </Field>
       <div className="form-actions">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel

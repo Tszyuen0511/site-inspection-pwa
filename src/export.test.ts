@@ -30,22 +30,26 @@ function photoFixture(
   };
 }
 describe("local reports and export", () => {
-  it("generates an A4 PDF with exact recorded measurements and status", async () => {
+  it("generates an A4 PDF with each item's status and inspection date", async () => {
     const r = fixture();
     r.company = "WSP Test Company";
+    // Measurement values from earlier versions are kept but no longer printed.
     r.responses["toe-level"].values = {
       measuredLevel: "-12.5000",
       specifiedLevel: "-12.0000",
       units: "m",
     };
     r.responses["toe-level"].status = "Fail";
+    r.responses["toe-level"].date = "2026-11-03";
     r.responses["toe-level"].remarks = "Observed and recorded";
     const pdf = await generatePDF(r, []);
     const content = await pdf.text();
     expect(content.startsWith("%PDF-")).toBe(true);
-    expect(content).toContain("-12.5000");
+    expect(content).not.toContain("-12.5000");
+    expect(content).toContain("2026/11/03");
     expect(content).toContain("Fail");
-    expect(content).toContain("Company: WSP Test Company");
+    // Company stays in the record but is not part of Inspection Information.
+    expect(content).not.toContain("Company:");
     const box = content.match(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/)!;
     expect(Number(box[1])).toBeCloseTo(595.28, 2);
     expect(Number(box[2])).toBeCloseTo(841.89, 2);
@@ -57,7 +61,9 @@ describe("local reports and export", () => {
     r.remarks = "General observation. ".repeat(400) + "END_OF_GENERAL";
     const content = await (await generatePDF(r, [])).text();
     expect(content).toContain("END_OF_REMARK");
-    expect(content).toContain("END_OF_GENERAL");
+    // General remarks are kept in the record but no longer printed.
+    expect(content).not.toContain("END_OF_GENERAL");
+    expect(content).not.toContain("General remarks");
     expect(content.match(/\/Type \/Page\b/g)!.length).toBeGreaterThan(3);
   });
   it("creates a ZIP package with reproducible record JSON and PDF", async () => {
@@ -89,29 +95,53 @@ describe("local reports and export", () => {
     r.remarks = "工地";
     await expect(generatePDF(r, [])).rejects.toThrow("Unicode");
   });
-  it("uses the inspection report structure, not the daily-report sections", async () => {
+  it("uses the simplified inspection report structure", async () => {
     const r = fixture();
-    r.inspectionNo = "INSP-SP-007";
+    r.element = "SP-007";
+    // A stored sequence number is not what the report shows.
+    r.inspectionNo = "INSP-SP-099";
+    r.fictional = true;
     const content = await (await generatePDF(r, [])).text();
     for (const heading of [
-      "Detail of Inspection",
-      "Inspection Item",
-      "Site Photos",
-      "Recorded measurements /",
+      "1.   Inspection Information",
+      "2.   Inspection Checklist",
+      "Photographic Records",
+      "Inspection Date",
       "Inspection No. INSP-SP-007",
+      "TCP Grade: TCP T3",
+      "Element Name: SP-007",
       "\\(Project Reference: TEST-001\\)",
       "Prepared by:",
     ])
       expect(content).toContain(heading);
     for (const removed of [
+      "INSP-SP-099",
       "Contract Status",
       "Work Done",
       "Daily Site Report",
       "Attention",
       "Inspection Checklist Appendix",
+      "FICTIONAL DEMONSTRATION RECORD",
+      "Statuses and measurements are recorded",
+      "Recorded measurements",
+      "Drawing / specification",
+      "Location: Zone A",
+      "Inspection Number:",
+      "Sign-off",
+      "Signature",
+      "Inspection date / time",
+      "General remarks",
+      "Weather",
     ])
       expect(content).not.toContain(removed);
     expect(content).not.toContain("(Nil)");
+  });
+  it("never prints the demonstration note saved in a demo record's remarks", async () => {
+    const r = fixture();
+    r.remarks =
+      "Fictional demonstration record. Observations and statuses are illustrative only.";
+    const content = await (await generatePDF(r, [])).text();
+    expect(content).not.toContain("Fictional demonstration record");
   });
   it("places six site photos on one sheet and carries the seventh onto another", async () => {
     const r = fixture();
@@ -129,18 +159,18 @@ describe("local reports and export", () => {
     ).text();
     expect(six.match(/\/Type \/Page\b/g)).toHaveLength(2);
     expect(seven.match(/\/Type \/Page\b/g)).toHaveLength(3);
-    expect(seven).toContain("CAPTION_6");
+    expect(seven).toContain("Photo 7 \\(P07\\)");
   });
-  it("keeps core logs, progress plans and long captions with their photo references", async () => {
+  it("keeps core logs, progress plans and long remarks with their photo references", async () => {
     const r = fixture();
     const core = photoFixture(r, 0, "core"),
       plan = photoFixture(r, 1, "plan");
-    core.caption = "Recorded caption text. ".repeat(200) + "END_OF_CAPTION";
+    core.remark = "Recorded remark text. ".repeat(200) + "END_OF_REMARK";
     const content = await (await generatePDF(r, [core, plan])).text();
     expect(content).toContain("Core Sample Log - BH-TEST");
     expect(content).toContain("Site Progress Plan");
     expect(content).toContain("Extended photographic captions");
-    expect(content).toContain("END_OF_CAPTION");
+    expect(content).toContain("END_OF_REMARK");
   });
   it("preserves daily-report values in the inspection package", async () => {
     const r = fixture();
@@ -170,7 +200,7 @@ describe("local reports and export", () => {
   });
 });
 
-it("prints concise weather with manual precedence and preserves forecast provenance in JSON", async () => {
+it("prints no weather, but keeps saved weather and GPS data in the JSON export", async () => {
   const r = fixture();
   r.gps = {
     latitude: 22.3,
@@ -194,21 +224,20 @@ it("prints concise weather with manual precedence and preserves forecast provena
     ...dailyReportDefaults(r),
     weather: "Observed drizzle on site",
   };
-  const text = await (await generatePDF(r, [])).text();
-  const pdfLines = [...text.matchAll(/\(([^\n]*?)\) Tj/g)]
-    .map((m) => m[1])
-    .join(" ");
-  expect(pdfLines.includes("Observed drizzle on site")).toBe(true);
-  expect(text.includes("MET Norway")).toBe(false);
-  // GPS is no longer printed in the inspection report; it stays in the JSON export.
-  expect(text.includes("22.300000")).toBe(false);
-  expect(text.includes("2026-11-02T02:05:00.000Z")).toBe(false);
-  r.dailyReport.weather = "";
-  const compact = await (await generatePDF(r, [])).text();
-  expect(compact.includes("Weather: cloudy, 25 C \\(forecast\\)")).toBe(true);
-  expect(compact.includes("Forecast summary: MET Norway")).toBe(true);
-  expect(compact.includes("humidity")).toBe(false);
-  expect(compact.includes("retrieved:")).toBe(false);
+  for (const observed of ["Observed drizzle on site", ""]) {
+    r.dailyReport.weather = observed;
+    const text = await (await generatePDF(r, [])).text();
+    for (const absent of [
+      "Weather",
+      "drizzle",
+      "cloudy",
+      "MET Norway",
+      "Forecast",
+      "CC BY",
+      "22.300000",
+    ])
+      expect(text).not.toContain(absent);
+  }
   const zip = await JSZip.loadAsync(
     await (await generatePackage(r, [])).arrayBuffer(),
   );
@@ -234,46 +263,91 @@ const imagePhoto = (
 ): Photo => ({ ...photoFixture(r, order), id, order, caption, itemId, remark });
 
 describe("inspection report layout", () => {
-  it("prints Weather directly after Location in Detail of Inspection", async () => {
+  it("prints only identification fields in Inspection Information", async () => {
     const r = fixture();
-    r.dailyReport = { ...dailyReportDefaults(r), weather: "Partly cloudy" };
+    r.company = "Test Co";
     const lines = await drawn(await generatePDF(r, []));
-    const at = (prefix: string) => lines.findIndex((l) => l.startsWith(prefix));
-    expect(at("Location: Zone A")).toBeGreaterThan(at("Element: SP-TEST"));
-    expect(at("Weather: Partly cloudy")).toBe(at("Location: Zone A") + 1);
-    expect(at("Inspection date / time:")).toBe(at("Weather:") + 1);
+    const start = lines.indexOf("1.   Inspection Information"),
+      end = lines.indexOf("2.   Inspection Checklist");
+    expect(lines.slice(start + 1, end)).toEqual([
+      "Project: Test Project (TEST-001)",
+      "Element Name: SP-TEST",
+      "Inspection Type: Sheet Pile",
+      "Inspector: Test Inspector",
+      "TCP Grade: TCP T3",
+      "Drawing Reference: TEST-DWG-01",
+    ]);
+    // The inspection number appears once: in the heading, not in the footer.
+    expect(lines.filter((l) => l.includes("INSP-SP-TEST"))).toEqual([
+      "Inspection No. INSP-SP-TEST",
+    ]);
   });
-  it("keeps each photograph's caption, item and remark together, after reordering", async () => {
+  it("captions each photo with its item description, own remark, item number and item date", async () => {
     const r = fixture();
-    const [first, second] = r.template.items;
+    const items = r.template.items;
+    const [first, , , fourth] = items;
+    r.responses[first.id].date = "2026-11-03";
+    r.responses[first.id].remarks = "CHECKLIST_REMARK";
+    r.responses[fourth.id].date = "2026-11-04";
+    // Several photos on one item, one on another, one general; order decides numbers.
     const photos = [
-      imagePhoto(r, "a", 2, "CAP_A", first.id, "REMARK_A"),
-      imagePhoto(r, "b", 0, "CAP_B", second.id, "REMARK_B"),
+      imagePhoto(r, "a", 3, "CAP_A", first.id, "REMARK_A"),
+      imagePhoto(r, "b", 0, "CAP_B", fourth.id, "REMARK_B"),
       imagePhoto(r, "c", 1, "CAP_C", "", undefined),
+      imagePhoto(r, "d", 2, "CAP_D", fourth.id, "REMARK_D"),
     ];
     const lines = await drawn(await generatePDF(r, photos));
-    const block = (caption: string) => {
-      const i = lines.findIndex((l) => l.endsWith(caption));
-      return lines.slice(i, i + 3);
+    const block = (label: string) => {
+      const i = lines.findIndex((l) => l.startsWith(label));
+      return lines.slice(i, i + 4);
     };
-    // Order field decides numbering: b=P01, c=P02, a=P03.
-    expect(block("CAP_B")).toEqual([
-      "Photo 1 (P01): CAP_B",
-      `Inspection Item: 2. ${second.description}`,
-      "Remark: REMARK_B",
+    expect(block("Photo 1 (P01)")).toEqual([
+      `Photo 1 (P01): ${fourth.description}.`,
+      "Remarks: REMARK_B",
+      "Inspection Item: 4",
+      "Inspection Date: 2026/11/04",
     ]);
-    expect(block("CAP_C").slice(0, 2)).toEqual([
-      "Photo 2 (P02): CAP_C",
-      "Inspection Item: General observation",
+    // No remark: no Remarks line at all, not even a placeholder.
+    expect(block("Photo 2 (P02)").slice(0, 3)).toEqual([
+      "Photo 2 (P02): CAP_C.",
+      "Inspection Item: General",
+      "Inspection Date: Not recorded",
     ]);
-    expect(block("CAP_C")[2]).not.toMatch(/^Remark:/);
-    expect(block("CAP_A")).toEqual([
-      "Photo 3 (P03): CAP_A",
-      `Inspection Item: 1. ${first.description}`,
-      "Remark: REMARK_A",
+    expect(lines.some((l) => /^Remarks:s*(Not recorded)?$/.test(l))).toBe(
+      false,
+    );
+    expect(block("Photo 3 (P03)")).toEqual([
+      `Photo 3 (P03): ${fourth.description}.`,
+      "Remarks: REMARK_D",
+      "Inspection Item: 4",
+      "Inspection Date: 2026/11/04",
     ]);
-    // Never substitutes the inspection's general remarks or checklist remarks.
-    expect(lines.filter((l) => l.startsWith("Remark:"))).toHaveLength(2);
+    expect(block("Photo 4 (P04)")).toEqual([
+      `Photo 4 (P04): ${first.description}.`,
+      "Remarks: REMARK_A",
+      "Inspection Item: 1",
+      "Inspection Date: 2026/11/03",
+    ]);
+    // Each reference is printed exactly once; checklist remarks never leak in.
+    for (const n of ["P01", "P02", "P03", "P04"])
+      expect(lines.filter((l) => l.includes(`(${n})`))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes("CHECKLIST_REMARK"))).toHaveLength(1);
+    expect(lines.some((l) => l.startsWith("Remarks: CHECKLIST_REMARK"))).toBe(
+      false,
+    );
+  });
+  it("never uses the upload, capture or report date as an inspection date", async () => {
+    const r = fixture();
+    const p = imagePhoto(r, "a", 0, "CAP", r.template.items[0].id);
+    p.createdAt = "2026-01-15T08:00:00.000Z";
+    const lines = await drawn(await generatePDF(r, [p]));
+    expect(lines).toContain("Inspection Date: Not recorded");
+    expect(lines.some((l) => l.includes("2026/01/15"))).toBe(false);
+    // Only the footer's generation date may show today's date.
+    const today = new Date().toISOString().slice(0, 10).replaceAll("-", "/");
+    expect(
+      lines.some((l) => l.includes(today) && !l.startsWith("Generated:")),
+    ).toBe(false);
   });
   it("draws no empty neighbouring cell for a lone photograph", async () => {
     const r = fixture();
@@ -324,17 +398,25 @@ describe("inspection report layout", () => {
     const content = await (
       await generatePDF(r, [imagePhoto(r, "x", 0, "CAP", "", long)])
     ).text();
-    expect(content).toContain("Remark: see extended caption notes.");
+    expect(content).toContain("Remarks: see extended caption notes.");
     expect(content).toContain("END_OF_REMARK");
   });
-  it("prints recorded measurements only, in a correctly named column, with failed status", async () => {
+  it("prints each item's own date, Not recorded when missing, and failed results in bold", async () => {
     const r = fixture();
+    const ids = r.template.items.map((i) => i.id);
+    r.responses[ids[0]].date = "2026-11-03";
+    r.responses[ids[1]].date = "2026-11-04";
     r.responses["toe-level"].values = { measuredLevel: "-12.48" };
     r.responses["corner-welding"].status = "Fail";
     r.responses["corner-welding"].remarks = "Weld defect at corner";
+    r.responses[ids[0]].status = "Pass";
     const lines = await drawn(await generatePDF(r, []));
-    expect(lines).toContain("Measured toe level: -12.48");
-    expect(lines.some((l) => l.startsWith("Specified toe level"))).toBe(false);
+    expect(lines).toContain("2026/11/03");
+    expect(lines).toContain("2026/11/04");
+    expect(lines.filter((l) => l === "Not recorded").length).toBe(
+      ids.length - 2,
+    );
+    expect(lines.some((l) => l.includes("-12.48"))).toBe(false);
     expect(lines).toContain("Weld defect at corner");
     // "Fail" is drawn with the bold font.
     const raw = await (await generatePDF(r, [])).text();

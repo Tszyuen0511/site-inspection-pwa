@@ -46,6 +46,7 @@ export function Records({
         (!search ||
           [
             r.id,
+            displayNo(r),
             r.inspectionNo,
             r.projectName,
             r.element,

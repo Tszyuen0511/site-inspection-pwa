@@ -54,11 +54,24 @@ export const statuses = [
   "Not Applicable",
   "Not Inspected",
 ] as const;
+/** A calendar date (YYYY-MM-DD) that really exists, e.g. not 2026-02-30. */
+export const isIsoDate = (v: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const d = new Date(v);
+  return !isNaN(d.valueOf()) && d.toISOString().startsWith(v);
+};
 export const responseSchema = z.object({
   status: z.enum(statuses),
   remarks: z.string(),
+  // reference and values come from the former "Measurements & reference" fields.
+  // They are kept so older records lose nothing, but are no longer shown or printed.
   reference: z.string(),
   values: z.record(z.string(), z.string()),
+  /** Date this item was inspected (YYYY-MM-DD). Absent or "" when not recorded. */
+  date: z
+    .string()
+    .refine((v) => v === "" || isIsoDate(v), "Enter a valid date")
+    .optional(),
 });
 export type Response = z.infer<typeof responseSchema>;
 const required = z.string().trim().min(1, "This field is required").max(500);
@@ -69,10 +82,7 @@ export const detailsSchema = z.object({
   date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Enter a date")
-    .refine((v) => {
-      const d = new Date(v);
-      return !isNaN(d.valueOf()) && d.toISOString().startsWith(v);
-    }, "Enter a valid date"),
+    .refine(isIsoDate, "Enter a valid date"),
   time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Enter a valid time"),
   type: required,
   element: required,
@@ -81,6 +91,7 @@ export const detailsSchema = z.object({
   role: required,
   company: z.string().trim().max(500).optional(),
   drawing: z.string().max(1000),
+  /** General remarks: no longer edited or printed; kept so earlier text is not lost. */
   remarks: z.string().max(10000),
 });
 export type Details = z.infer<typeof detailsSchema>;
@@ -97,6 +108,7 @@ export const inspectionSchema = detailsSchema.extend({
   fictional: z.boolean(),
   dailyReport: dailyReportSchema.optional(),
   gps: gpsSchema.optional(),
+  /** Saved by earlier versions; kept for compatibility, no longer shown or printed. */
   weatherSnapshot: weatherSchema.optional(),
 });
 export type Inspection = z.infer<typeof inspectionSchema>;
@@ -179,12 +191,50 @@ export interface DrawingFile {
   bytes: ArrayBuffer;
 }
 const unit = z.number().finite().min(0).max(1);
+// ---- Highlighter pen ---------------------------------------------------------
+export const HIGHLIGHT_COLORS = ["yellow", "red", "green", "blue"] as const;
+export type HighlightColor = (typeof HIGHLIGHT_COLORS)[number];
+export const HIGHLIGHT_RGB: Record<HighlightColor, [number, number, number]> = {
+  yellow: [250, 204, 21],
+  red: [239, 68, 68],
+  green: [34, 197, 94],
+  blue: [59, 130, 246],
+};
+/** Stroke widths as a fraction of the drawing's width. */
+export const HIGHLIGHT_WIDTHS = {
+  small: 0.008,
+  medium: 0.016,
+  large: 0.028,
+} as const;
+export const HIGHLIGHT_OPACITY = { min: 0.15, max: 0.5, default: 0.3 };
+export const MAX_STROKE_POINTS = 2000;
+type StrokeStyle = { color?: HighlightColor; opacity?: number; width?: number };
+export const highlightColor = (a: StrokeStyle) => a.color ?? "yellow";
+export const highlightOpacity = (a: StrokeStyle) =>
+  Math.min(
+    HIGHLIGHT_OPACITY.max,
+    Math.max(HIGHLIGHT_OPACITY.min, a.opacity ?? HIGHLIGHT_OPACITY.default),
+  );
+export const highlightWidth = (a: StrokeStyle) =>
+  a.width ?? HIGHLIGHT_WIDTHS.medium;
 export const annotationSchema = z.object({
   id: z.string().uuid(),
   inspectionId: z.string().min(1),
   drawingId: z.string().uuid(),
   page: z.number().int().min(1).max(MAX_DRAWING_PAGES),
-  kind: z.enum(["marker", "rect", "circle", "arrow", "text"]),
+  // "region" is the inspected element's location: at most one per inspection.
+  // "highlight" is a freehand highlighter stroke over the same location. The
+  // other kinds come from earlier versions; they are kept but no longer shown
+  // or printed.
+  kind: z.enum([
+    "marker",
+    "rect",
+    "circle",
+    "arrow",
+    "text",
+    "region",
+    "highlight",
+  ]),
   /** Stable checklist item id (markers only). Never a displayed number. */
   itemId: z.string().optional(),
   // Drawing-relative coordinates (0..1 of page width / height).
@@ -193,6 +243,16 @@ export const annotationSchema = z.object({
   x2: unit.optional(),
   y2: unit.optional(),
   text: z.string().max(120).optional(),
+  /** Highlighter path, drawing-relative [x, y] points. */
+  points: z
+    .array(z.tuple([unit, unit]))
+    .min(2)
+    .max(MAX_STROKE_POINTS)
+    .optional(),
+  color: z.enum(HIGHLIGHT_COLORS).optional(),
+  opacity: z.number().min(0.1).max(0.6).optional(),
+  /** Stroke width as a fraction of the drawing's width, so it scales with it. */
+  width: z.number().positive().max(0.1).optional(),
   createdAt: z.string(),
 });
 export type Annotation = z.infer<typeof annotationSchema>;
@@ -259,9 +319,35 @@ export function inspectionCode(typeName: string) {
 }
 export const formatInspectionNo = (code: string, n: number) =>
   `INSP-${code}-${String(n).padStart(3, "0")}`;
-/** The number shown everywhere; older records keep showing their original ID. */
-export const displayNo = (r: Pick<Inspection, "id" | "inspectionNo">) =>
-  r.inspectionNo || r.id;
+/**
+ * Inspection number derived from the element name: "SP-001" -> "INSP-SP-001".
+ * Spaces and characters unsuitable for file names become "-", and an existing
+ * "INSP-" prefix is not doubled. Empty when the name has nothing usable.
+ */
+export function elementInspectionNo(element: string | undefined) {
+  const core = (element || "")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "")
+    .replace(/^(INSP[-_]+)+/, "")
+    .slice(0, 60)
+    .replace(/[-_]+$/, "");
+  return core && core !== "INSP" ? `INSP-${core}` : "";
+}
+/**
+ * The number shown everywhere, from the element name. The stored inspectionNo and
+ * the internal id are only fallbacks (a record with no usable element name); the
+ * id itself never changes, so photo and plan links are unaffected.
+ */
+export const displayNo = (
+  r: Pick<Inspection, "id" | "inspectionNo"> & { element?: string },
+) => elementInspectionNo(r.element) || r.inspectionNo || r.id;
+/** "2026-11-03" -> "2026/11/03"; anything else -> "Not recorded". */
+export const displayDate = (iso: string | undefined) =>
+  iso && isIsoDate(iso) ? iso.replaceAll("-", "/") : "Not recorded";
 export function validationIssues(record: Inspection): string[] {
   const result = detailsSchema.safeParse(record);
   const issues = result.success

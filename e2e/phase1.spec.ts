@@ -70,9 +70,6 @@ test("profile and project defaults persist; repeat clears results offline", asyn
   ).toHaveValue("DWG-PHASE1");
   await page.getByLabel("Element identification *").fill("PHASE1-REPEAT");
   await page
-    .getByLabel("General remarks", { exact: true })
-    .fill("Old remarks to clear");
-  await page
     .getByRole("button", { name: "Create inspection", exact: true })
     .click();
   await page
@@ -108,8 +105,9 @@ test("profile and project defaults persist; repeat clears results offline", asyn
   await expect(page.locator(".photo-card")).toHaveCount(0);
   await editorTab(page, "Checklist");
   await page.getByRole("button", { name: "Details", exact: true }).click();
-  await expect(page.getByLabel("General remarks", { exact: true })).toHaveValue(
-    "",
+  // General remarks are no longer part of the inspection details.
+  await expect(page.getByLabel("General remarks", { exact: true })).toHaveCount(
+    0,
   );
   await expect(
     page.getByLabel("Inspector company", { exact: true }),

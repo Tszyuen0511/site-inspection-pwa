@@ -133,8 +133,13 @@
 .plans-viewer.mode-text,
 .plans-viewer.mode-rect,
 .plans-viewer.mode-circle,
-.plans-viewer.mode-arrow {
+.plans-viewer.mode-arrow,
+.plans-viewer.mode-region,
+.plans-viewer.mode-highlight {
   cursor: crosshair;
+}
+.plans-viewer.mode-erase {
+  cursor: cell;
 }
 .plans-image {
   position: absolute;
@@ -448,4 +453,88 @@
     height: calc(100dvh - 140px);
     min-height: 220px;
   }
+}
+/* The inspected element's location region: red outline, light red fill. */
+.plan-region .fill rect {
+  fill: rgb(220 38 38 / 0.14);
+  stroke: none;
+}
+.plan-region .stroke * {
+  stroke: #dc2626;
+  stroke-width: 3;
+}
+.plan-region.selected .stroke * {
+  stroke-width: 4;
+}
+.plans-region-side {
+  display: grid;
+  gap: 12px;
+}
+/* Highlighter pen: semi-transparent freehand strokes over the drawing. */
+.plan-highlight polyline,
+polyline.plan-highlight {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.plan-highlight .hit {
+  stroke: transparent;
+}
+.plan-highlight.erasable .hit {
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.plans-pen,
+.plans-pen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.pen-swatches,
+.pen-sizes {
+  display: flex;
+  gap: 6px;
+}
+.pen-swatch {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  padding: 0;
+}
+.pen-swatch.selected {
+  border-color: var(--strong);
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--focus);
+}
+.pen-size {
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.pen-size.selected {
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-fg);
+}
+.pen-opacity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.pen-opacity input {
+  width: 120px;
+}
+.plans-stroke-count {
+  margin-top: 8px;
 }

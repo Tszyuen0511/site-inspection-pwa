@@ -100,15 +100,20 @@ describe("inspection numbers", () => {
   it("strips accents when deriving a code", () => {
     expect(inspectionCode("Décapage Pile")).toBe("DP");
   });
-  it("leaves older records without a number untouched and shows their original id", async () => {
-    const legacy = make("Sheet Pile");
+  it("leaves older records untouched and shows a number from the element name", async () => {
+    const legacy = make("Sheet Pile", details.projectId, "SP-007");
     await db.inspections.add(legacy);
-    const next = await addNumberedInspection(make("Sheet Pile"));
-    expect(next.inspectionNo).toBe("INSP-SP-001");
+    const next = await addNumberedInspection(
+      make("Sheet Pile", details.projectId, "SP-015"),
+    );
     expect(await db.inspections.get(legacy.id)).toEqual(legacy);
-    expect(displayNo(legacy)).toBe(legacy.id);
-    expect(packageName(legacy)).toContain(legacy.id);
-    expect(packageName(next)).toContain("INSP-SP-001");
+    expect(displayNo(legacy)).toBe("INSP-SP-007");
+    expect(displayNo(next)).toBe("INSP-SP-015");
+    expect(packageName(legacy)).toContain("INSP-SP-007");
+    expect(packageName(next)).toContain("INSP-SP-015");
+    // Without a usable element name the stored number, then the id, is shown.
+    expect(displayNo({ ...next, element: " - " })).toBe(next.inspectionNo);
+    expect(displayNo({ ...legacy, element: "" })).toBe(legacy.id);
   });
   it("gives a repeated inspection a new number and keeps the source's number", async () => {
     const source = await addNumberedInspection(make("Sheet Pile"));

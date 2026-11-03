@@ -1,79 +1,91 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
-  Camera,
+  Eraser,
   Hand,
-  ListOrdered,
+  Highlighter,
   Maximize,
   MapPin,
   Minus,
   Plus,
   RotateCcw,
+  SquareDashed,
   Trash2,
+  Undo2,
   Upload,
 } from "lucide-react";
 import { db } from "../db";
 import {
+  HIGHLIGHT_COLORS,
+  HIGHLIGHT_OPACITY,
+  HIGHLIGHT_RGB,
+  HIGHLIGHT_WIDTHS,
   MAX_DRAWINGS,
   MAX_DRAWING_PAGES,
-  MAX_PHOTOS,
-  photoNumber,
+  MAX_STROKE_POINTS,
+  highlightColor,
+  highlightOpacity,
+  highlightWidth,
   type Annotation,
   type Drawing,
+  type HighlightColor,
   type Inspection,
-  type Photo,
-  type PhotoView,
 } from "../domain";
 import {
-  addAnnotation,
   addDrawing,
+  addHighlight,
+  clearHighlights,
   deleteAnnotation,
   deleteDrawing,
-  editPlans,
+  highlightStrokes,
+  locationRegion,
+  markingPage,
+  setLocationRegion,
+  undoHighlight,
   updateAnnotation,
   updateDrawing,
 } from "../drawings";
 import { forgetDrawing, pageImage, readDrawingFile } from "../plan-render";
-import { legendRows, markLabels, statusText } from "../plan-labels";
-import { orderedPhotos, preparePhoto, toStoredPhoto } from "../photos";
+import { toDrawing, toViewer } from "../plan-view";
 import { Button, Dialog, Field } from "./ui";
-import { PhotoImage } from "./PhotoManager";
 
-type Mode = "navigate" | "marker" | "rect" | "circle" | "arrow" | "text";
+type Mode = "navigate" | "region" | "highlight" | "erase";
 type View = { scale: number; x: number; y: number };
 type Point = { x: number; y: number };
+type Pen = {
+  color: HighlightColor;
+  size: keyof typeof HIGHLIGHT_WIDTHS;
+  opacity: number;
+};
 const TOOLS: { mode: Mode; label: string; Icon: typeof Hand }[] = [
   { mode: "navigate", label: "Navigate", Icon: Hand },
-  { mode: "marker", label: "Place mark", Icon: MapPin },
+  { mode: "region", label: "Place Region", Icon: SquareDashed },
+  { mode: "highlight", label: "Highlight Pen", Icon: Highlighter },
+  { mode: "erase", label: "Eraser", Icon: Eraser },
 ];
+const rgb = (c: HighlightColor) => `rgb(${HIGHLIGHT_RGB[c].join(" ")})`;
+/** Keeps at most MAX_STROKE_POINTS, always including the last point. */
+const thin = (points: [number, number][]) => {
+  if (points.length <= MAX_STROKE_POINTS) return points;
+  const step = points.length / (MAX_STROKE_POINTS - 1);
+  return [
+    ...Array.from(
+      { length: MAX_STROKE_POINTS - 1 },
+      (_, i) => points[Math.floor(i * step)],
+    ),
+    points.at(-1)!,
+  ];
+};
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const TAP = 6; // px of movement that still counts as a tap
-/** Matches the CSS breakpoint where details and legend sit in a side panel. */
-const SIDE_PANEL = "(min-width: 1100px)";
-function useSidePanel() {
-  const [wide, setWide] = useState(() => matchMedia(SIDE_PANEL).matches);
-  useEffect(() => {
-    const query = matchMedia(SIDE_PANEL);
-    const update = () => setWide(query.matches);
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
-  return wide;
-}
-
 export function Plans({
   record,
-  photos,
   run,
-  onOpenItem,
 }: {
   record: Inspection;
-  photos: PhotoView[];
   run: (work: () => Promise<unknown>, success?: string) => Promise<void>;
-  onOpenItem: (itemId: string) => void;
 }) {
   const readOnly = record.status !== "Draft";
-  const sidePanel = useSidePanel();
   const drawings = useLiveQuery(
     () => db.drawings.where("inspectionId").equals(record.id).sortBy("order"),
     [record.id],
@@ -87,18 +99,17 @@ export function Plans({
   const [drawingId, setDrawingId] = useState(""),
     [page, setPage] = useState(1),
     [mode, setMode] = useState<Mode>("navigate"),
-    [itemId, setItemId] = useState(record.template.items[0]?.id || ""),
     [selectedId, setSelectedId] = useState(""),
-    [sheet, setSheet] = useState<"" | "mark" | "legend">(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [confirmDrawing, setConfirmDrawing] = useState<Drawing>(),
-    [confirmMark, setConfirmMark] = useState<{
-      a: Annotation;
-      photos: number;
-    }>(),
-    [textAt, setTextAt] = useState<Point>(),
-    [textValue, setTextValue] = useState("");
+    [confirmRegion, setConfirmRegion] = useState(false),
+    [confirmClear, setConfirmClear] = useState(false),
+    [pen, setPen] = useState<Pen>({
+      color: "yellow",
+      size: "medium",
+      opacity: HIGHLIGHT_OPACITY.default,
+    });
   const drawing = drawings.find((d) => d.id === drawingId) || drawings[0];
   const currentPage = drawing ? Math.min(page, drawing.pageCount) : 1;
   useEffect(() => {
@@ -107,15 +118,27 @@ export function Plans({
   useEffect(() => {
     if (readOnly) setMode("navigate");
   }, [readOnly]);
-  const labels = useMemo(
-    () => markLabels(record.template.items, annotations, drawings),
-    [record.template.items, annotations, drawings],
-  );
-  const onPage = annotations.filter(
-    (a) => a.drawingId === drawing?.id && a.page === currentPage,
-  );
-  const selected = annotations.find((a) => a.id === selectedId);
-  const legend = legendRows(record, annotations, drawings);
+  // The inspected element's single location region (legacy marks are not shown).
+  const region = locationRegion(annotations);
+  const regionDrawing = region
+    ? drawings.find((d) => d.id === region.drawingId)
+    : undefined;
+  const regionHere =
+    !!region && region.drawingId === drawing?.id && region.page === currentPage;
+  // Highlighter strokes belong to the same single location as the region.
+  const strokes = highlightStrokes(annotations);
+  const marked = markingPage(annotations);
+  const markedDrawing = marked
+    ? drawings.find((d) => d.id === marked.drawingId)
+    : undefined;
+  const markedHere =
+    !!marked && marked.drawingId === drawing?.id && marked.page === currentPage;
+  const onPage = [
+    ...strokes.filter(
+      (s) => s.drawingId === drawing?.id && s.page === currentPage,
+    ),
+    ...(regionHere ? [region] : []),
+  ];
   const fileInput = useRef<HTMLInputElement>(null);
 
   const upload = async (list: FileList | null) => {
@@ -143,8 +166,9 @@ export function Plans({
           <h1 id="plans-title">Plans</h1>
           <p>
             <span className="plans-intro">
-              Mark inspection locations on drawings. Marks follow the checklist
-              numbering and appear in the PDF report.
+              Mark where the inspected element is on the location plan with a
+              region, highlighter strokes, or both. They appear on the plan in
+              the PDF report.
             </span>
           </p>
         </div>
@@ -171,7 +195,7 @@ export function Plans({
       {readOnly && (
         <div className="notice" role="status">
           This inspection is {record.status.toLowerCase()}. Plans are read-only;
-          reopen it as a revision to edit marks.
+          reopen it as a revision to edit the location region.
         </div>
       )}
       {!drawings.length ? (
@@ -191,7 +215,7 @@ export function Plans({
               drawings={drawings}
               drawing={drawing}
               page={currentPage}
-              annotations={annotations}
+              marked={marked}
               readOnly={readOnly}
               run={run}
               onDrawing={(id) => {
@@ -217,110 +241,156 @@ export function Plans({
                       <button
                         key={m}
                         type="button"
-                        className={`plan-tool ${mode === m ? "active" : ""} ${m === "marker" ? "primary" : ""}`}
+                        className={`plan-tool ${mode === m ? "active" : ""} ${m === "region" ? "primary" : ""}`}
                         aria-pressed={mode === m}
                         disabled={readOnly && m !== "navigate"}
                         onClick={() => setMode(m)}
                         title={label}
                       >
                         <Icon size={19} />
-                        <span
-                          className={
-                            m === "marker" || m === "navigate"
-                              ? "plan-tool-label"
-                              : "sr-only"
-                          }
-                        >
-                          {label}
-                        </span>
+                        <span className="plan-tool-label">{label}</span>
                       </button>
                     ))}
-                    <button
-                      type="button"
-                      className="plan-tool plans-legend-button"
-                      onClick={() => setSheet("legend")}
-                      aria-label={`Legend, ${legend.length} marks`}
-                    >
-                      <ListOrdered size={19} />
-                      <span aria-hidden="true">{legend.length}</span>
-                    </button>
                   </div>
-                  <label className="plans-item-select">
-                    <span>Checklist item for marks</span>
-                    <select
-                      value={itemId}
-                      disabled={readOnly}
-                      onChange={(e) => setItemId(e.target.value)}
+                  {mode === "highlight" && !readOnly && (
+                    <div
+                      className="plans-pen"
+                      role="group"
+                      aria-label="Highlighter settings"
                     >
-                      {record.template.items.map((item, i) => (
-                        <option key={item.id} value={item.id}>
-                          {i + 1}. {item.description}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      <div
+                        className="pen-swatches"
+                        role="radiogroup"
+                        aria-label="Highlighter colour"
+                      >
+                        {HIGHLIGHT_COLORS.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            role="radio"
+                            aria-checked={pen.color === c}
+                            aria-label={c[0].toUpperCase() + c.slice(1)}
+                            className={`pen-swatch ${pen.color === c ? "selected" : ""}`}
+                            style={{ background: rgb(c) }}
+                            onClick={() => setPen({ ...pen, color: c })}
+                          />
+                        ))}
+                      </div>
+                      <div
+                        className="pen-sizes"
+                        role="radiogroup"
+                        aria-label="Stroke width"
+                      >
+                        {(["small", "medium", "large"] as const).map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            role="radio"
+                            aria-checked={pen.size === s}
+                            className={`pen-size ${pen.size === s ? "selected" : ""}`}
+                            onClick={() => setPen({ ...pen, size: s })}
+                          >
+                            {s[0].toUpperCase() + s.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                      <label className="pen-opacity">
+                        <span>Opacity {Math.round(pen.opacity * 100)}%</span>
+                        <input
+                          type="range"
+                          min={HIGHLIGHT_OPACITY.min}
+                          max={HIGHLIGHT_OPACITY.max}
+                          step={0.05}
+                          value={pen.opacity}
+                          onChange={(e) =>
+                            setPen({ ...pen, opacity: Number(e.target.value) })
+                          }
+                        />
+                      </label>
+                    </div>
+                  )}
+                  {(mode === "highlight" || mode === "erase") && !readOnly && (
+                    <div className="plans-pen-actions">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!strokes.length}
+                        onClick={() =>
+                          void run(
+                            () => undoHighlight(record.id),
+                            "Last highlight removed.",
+                          )
+                        }
+                      >
+                        <Undo2 size={16} />
+                        Undo stroke
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-danger"
+                        disabled={!strokes.length}
+                        onClick={() => setConfirmClear(true)}
+                      >
+                        <Trash2 size={16} />
+                        Clear highlights
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <Viewer
                   key={`${drawing.id}:${currentPage}`}
                   drawing={drawing}
                   page={currentPage}
                   annotations={onPage}
-                  labels={labels}
                   mode={mode}
                   readOnly={readOnly}
                   selectedId={selectedId}
-                  // Phones: keep the selected mark visible above the bottom sheet.
-                  focusId={!sidePanel && sheet === "mark" ? selectedId : ""}
+                  pen={pen}
                   modeHint={
-                    mode === "marker"
-                      ? `Tap the drawing to place a mark for item ${record.template.items.findIndex((i) => i.id === itemId) + 1}.`
-                      : mode === "navigate"
-                        ? "Drag to pan, pinch or scroll to zoom. Tap a mark to see its item."
-                        : mode === "text"
-                          ? "Tap where the note should go."
-                          : "Drag on the drawing to draw."
+                    mode === "region"
+                      ? region
+                        ? "Drag on the drawing to draw a new region. It replaces the current one."
+                        : "Drag on the drawing to draw the element's region."
+                      : mode === "highlight"
+                        ? "Draw over the element's location. Use two fingers to pan or zoom."
+                        : mode === "erase"
+                          ? "Tap a highlighter stroke to erase it."
+                          : readOnly
+                            ? "Drag to pan, pinch or scroll to zoom."
+                            : "Drag to pan, pinch or scroll to zoom. Drag the region to move it."
                   }
                   onError={setError}
-                  onSelect={(id) => {
-                    setSelectedId(id);
-                    // Phones and tablets: details open as a sheet; wide screens
-                    // already show them in the side panel.
-                    if (id && !sidePanel) setSheet("mark");
-                  }}
-                  onPlace={(p) =>
-                    void run(async () => {
-                      if (!itemId)
-                        throw new Error("Choose a checklist item first.");
-                      const a = await addAnnotation({
-                        inspectionId: record.id,
-                        drawingId: drawing.id,
-                        page: currentPage,
-                        kind: "marker",
-                        itemId,
-                        x: p.x,
-                        y: p.y,
-                      });
-                      setSelectedId(a.id);
-                    })
-                  }
-                  onShape={(kind, a, b) =>
+                  onSelect={setSelectedId}
+                  onStroke={(points) =>
                     void run(() =>
-                      addAnnotation({
+                      addHighlight({
                         inspectionId: record.id,
                         drawingId: drawing.id,
                         page: currentPage,
-                        kind,
-                        x: a.x,
-                        y: a.y,
-                        x2: b.x,
-                        y2: b.y,
+                        points: thin(points),
+                        color: pen.color,
+                        opacity: pen.opacity,
+                        width: HIGHLIGHT_WIDTHS[pen.size],
                       }),
                     )
                   }
-                  onText={(p) => {
-                    setTextValue("");
-                    setTextAt(p);
-                  }}
+                  onErase={(a) =>
+                    void run(() => deleteAnnotation(a), "Highlight erased.")
+                  }
+                  onRegion={(a, b) =>
+                    void run(async () => {
+                      const saved = await setLocationRegion({
+                        inspectionId: record.id,
+                        drawingId: drawing.id,
+                        page: currentPage,
+                        a,
+                        b,
+                      });
+                      setSelectedId(saved.id);
+                      setMode("navigate");
+                    }, "Location region saved.")
+                  }
                   onMove={(a, patch) =>
                     void run(() => updateAnnotation(a, patch))
                   }
@@ -331,161 +401,91 @@ export function Plans({
                   </p>
                 )}
               </div>
-              <aside
-                className="plans-side"
-                aria-label="Mark details and legend"
-              >
+              <aside className="plans-region-side" aria-label="Location region">
                 <div className="card plans-panel">
-                  {selected ? (
-                    <MarkDetails
-                      annotation={selected}
-                      record={record}
-                      photos={photos}
-                      label={labels.get(selected.id)?.label}
-                      readOnly={readOnly}
-                      run={run}
-                      onOpenItem={onOpenItem}
-                      onDelete={async () =>
-                        setConfirmMark({
-                          a: selected,
-                          photos: photos.filter((p) => p.markId === selected.id)
-                            .length,
-                        })
-                      }
-                    />
+                  <h2 className="plans-panel-title">Location region</h2>
+                  {region ? (
+                    <>
+                      <p className="small">
+                        Placed on{" "}
+                        <strong>
+                          {regionDrawing?.title ||
+                            regionDrawing?.name ||
+                            "a drawing"}
+                        </strong>
+                        {regionDrawing && regionDrawing.pageCount > 1
+                          ? `, page ${region.page}`
+                          : ""}
+                        . All checklist items refer to this location.
+                      </p>
+                      <div className="row wrap">
+                        {!regionHere && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setDrawingId(region.drawingId);
+                              setPage(region.page);
+                              setSelectedId(region.id);
+                            }}
+                          >
+                            <MapPin size={16} />
+                            Show region
+                          </Button>
+                        )}
+                        {!readOnly && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-danger"
+                            onClick={() => setConfirmRegion(true)}
+                          >
+                            <Trash2 size={16} />
+                            Remove region
+                          </Button>
+                        )}
+                      </div>
+                    </>
                   ) : (
                     <p className="muted small">
-                      Select a mark to see its checklist item, status, remarks
-                      and photographs.
+                      No region yet.
+                      {readOnly
+                        ? ""
+                        : " Choose Place Region, then drag across the element's location on the drawing."}
                     </p>
                   )}
-                </div>
-                <div className="card plans-panel">
-                  <Legend
-                    rows={legend}
-                    drawings={drawings}
-                    onSelect={(row) => {
-                      setDrawingId(row.drawingId);
-                      setPage(row.page);
-                      setSelectedId(row.annotationId);
-                    }}
-                  />
+                  <p className="small muted plans-stroke-count">
+                    {strokes.length
+                      ? `${strokes.length} highlighter stroke${strokes.length === 1 ? "" : "s"}`
+                      : "No highlighter strokes."}
+                  </p>
+                  {marked && !markedHere && !regionHere && (
+                    <p className="small muted">
+                      The location is marked on{" "}
+                      {markedDrawing?.title ||
+                        markedDrawing?.name ||
+                        "another drawing"}
+                      {markedDrawing && markedDrawing.pageCount > 1
+                        ? `, page ${marked.page}`
+                        : ""}
+                      .
+                    </p>
+                  )}
                 </div>
               </aside>
             </div>
           </>
         )
       )}
-      {/* Phone: details and legend open as bottom sheets. */}
-      <Dialog
-        open={sheet === "mark" && !!selected && !sidePanel}
-        onOpenChange={(v) => !v && setSheet("")}
-        title={
-          selected?.kind === "marker"
-            ? `Mark ${labels.get(selected.id)?.label ?? ""}`
-            : "Annotation"
-        }
-        className="plans-sheet"
-      >
-        {selected && (
-          <MarkDetails
-            annotation={selected}
-            record={record}
-            photos={photos}
-            label={labels.get(selected.id)?.label}
-            readOnly={readOnly}
-            run={run}
-            onOpenItem={(id) => {
-              setSheet("");
-              onOpenItem(id);
-            }}
-            onDelete={async () => {
-              setSheet("");
-              setConfirmMark({
-                a: selected,
-                photos: photos.filter((p) => p.markId === selected.id).length,
-              });
-            }}
-          />
-        )}
-      </Dialog>
-      <Dialog
-        open={sheet === "legend" && !sidePanel}
-        onOpenChange={(v) => !v && setSheet("")}
-        title="Plan legend"
-        description="Generated from the checklist. Labels follow item numbers; several locations for one item get A, B, C."
-        className="plans-sheet"
-      >
-        <Legend
-          rows={legend}
-          drawings={drawings}
-          onSelect={(row) => {
-            setDrawingId(row.drawingId);
-            setPage(row.page);
-            setSelectedId(row.annotationId);
-            setSheet("");
-          }}
-        />
-      </Dialog>
-      <Dialog
-        open={!!textAt}
-        onOpenChange={(v) => !v && setTextAt(undefined)}
-        title="Text note"
-        description="A short note shown on the drawing (up to 120 characters)."
-      >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const at = textAt!,
-              text = textValue.trim();
-            setTextAt(undefined);
-            if (text && drawing)
-              void run(() =>
-                addAnnotation({
-                  inspectionId: record.id,
-                  drawingId: drawing.id,
-                  page: currentPage,
-                  kind: "text",
-                  x: at.x,
-                  y: at.y,
-                  text,
-                }),
-              );
-          }}
-        >
-          <Field label="Note">
-            <input
-              autoFocus
-              maxLength={120}
-              value={textValue}
-              onChange={(e) => setTextValue(e.target.value)}
-              placeholder="[Short note]"
-            />
-          </Field>
-          <div className="form-actions">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setTextAt(undefined)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit">Add note</Button>
-          </div>
-        </form>
-      </Dialog>
       <Dialog
         open={!!confirmDrawing}
         onOpenChange={(v) => !v && setConfirmDrawing(undefined)}
         title="Delete this drawing?"
-        description={(() => {
-          const n = annotations.filter(
-            (a) => a.drawingId === confirmDrawing?.id,
-          ).length;
-          return n
-            ? `It has ${n} mark(s) or note(s) that will be deleted with it. Photographs stay with their checklist items but lose the location link. The original file is removed from this device.`
-            : "The original file is removed from this device.";
-        })()}
+        description={
+          region && region.drawingId === confirmDrawing?.id
+            ? "The location region on this drawing is deleted with it. The original file is removed from this device."
+            : "The original file is removed from this device."
+        }
       >
         <div className="form-actions">
           <Button
@@ -512,29 +512,49 @@ export function Plans({
         </div>
       </Dialog>
       <Dialog
-        open={!!confirmMark}
-        onOpenChange={(v) => !v && setConfirmMark(undefined)}
-        title="Delete this annotation?"
-        description={
-          confirmMark?.photos
-            ? `${confirmMark.photos} photograph(s) were taken for this mark. They stay with their checklist item but lose the location link.`
-            : "This removes it from the drawing."
-        }
+        open={confirmRegion}
+        onOpenChange={setConfirmRegion}
+        title="Remove the location region?"
+        description="The element's location is removed from the plan. You can place a new region at any time."
       >
         <div className="form-actions">
-          <Button variant="outline" onClick={() => setConfirmMark(undefined)}>
+          <Button variant="outline" onClick={() => setConfirmRegion(false)}>
             Cancel
           </Button>
           <Button
             variant="destructive"
             onClick={() => {
-              const a = confirmMark!.a;
-              setConfirmMark(undefined);
+              setConfirmRegion(false);
               setSelectedId("");
-              void run(() => deleteAnnotation(a), "Annotation deleted.");
+              if (region)
+                void run(
+                  () => deleteAnnotation(region),
+                  "Location region removed.",
+                );
             }}
           >
-            Delete
+            Remove region
+          </Button>
+        </div>
+      </Dialog>
+      <Dialog
+        open={confirmClear}
+        onOpenChange={setConfirmClear}
+        title="Clear all highlights?"
+        description={`All ${strokes.length} highlighter stroke(s) are removed from the plan. The location region and the drawing itself are not changed.`}
+      >
+        <div className="form-actions">
+          <Button variant="outline" onClick={() => setConfirmClear(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              setConfirmClear(false);
+              void run(() => clearHighlights(record.id), "Highlights cleared.");
+            }}
+          >
+            Clear highlights
           </Button>
         </div>
       </Dialog>
@@ -546,7 +566,7 @@ function DrawingBar({
   drawings,
   drawing,
   page,
-  annotations,
+  marked,
   readOnly,
   run,
   onDrawing,
@@ -556,16 +576,15 @@ function DrawingBar({
   drawings: Drawing[];
   drawing: Drawing;
   page: number;
-  annotations: Annotation[];
+  marked?: { drawingId: string; page: number };
   readOnly: boolean;
   run: (work: () => Promise<unknown>) => Promise<void>;
   onDrawing: (id: string) => void;
   onPage: (page: number) => void;
   onDelete: () => void;
 }) {
-  const count = (p: number) =>
-    annotations.filter((a) => a.drawingId === drawing.id && a.page === p)
-      .length;
+  const hasMarking = (p: number) =>
+    marked?.drawingId === drawing.id && marked.page === p;
   return (
     <div className="card plans-drawing-bar">
       <div className="plans-drawing-pick">
@@ -591,9 +610,7 @@ function DrawingBar({
                 (p) => (
                   <option key={p} value={p}>
                     Page {p}
-                    {count(p)
-                      ? ` · ${count(p)} annotation${count(p) === 1 ? "" : "s"}`
-                      : ""}
+                    {hasMarking(p) ? " · marked location" : ""}
                   </option>
                 ),
               )}
@@ -651,33 +668,31 @@ function Viewer({
   drawing,
   page,
   annotations,
-  labels,
   mode,
   readOnly,
   selectedId,
-  focusId,
+  pen,
   modeHint,
   onError,
   onSelect,
-  onPlace,
-  onShape,
-  onText,
+  onRegion,
+  onStroke,
+  onErase,
   onMove,
 }: {
   drawing: Drawing;
   page: number;
   annotations: Annotation[];
-  labels: ReturnType<typeof markLabels>;
   mode: Mode;
   readOnly: boolean;
   selectedId: string;
-  focusId: string;
+  pen: Pen;
   modeHint: string;
   onError: (message: string) => void;
   onSelect: (id: string) => void;
-  onPlace: (p: Point) => void;
-  onShape: (kind: "rect" | "circle" | "arrow", a: Point, b: Point) => void;
-  onText: (p: Point) => void;
+  onRegion: (a: Point, b: Point) => void;
+  onStroke: (points: [number, number][]) => void;
+  onErase: (a: Annotation) => void;
   onMove: (a: Annotation, patch: Partial<Annotation>) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -690,6 +705,8 @@ function Viewer({
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [fitted, setFitted] = useState(false);
   const [draft, setDraft] = useState<{ a: Point; b: Point }>();
+  // The highlighter stroke being drawn, in drawing-relative coordinates.
+  const [ink, setInk] = useState<[number, number][]>();
   const [moving, setMoving] = useState<{
     id: string;
     dx: number;
@@ -702,6 +719,7 @@ function Viewer({
     pinch?: { dist: number; mid: Point; view: View };
     target?: Annotation;
     moved: boolean;
+    stroke?: [number, number][];
   }>({ pointers: new Map(), moved: false });
 
   useEffect(() => {
@@ -761,19 +779,6 @@ function Viewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.w, size.h]);
 
-  useEffect(() => {
-    const a = annotations.find((x) => x.id === focusId);
-    if (!a || !image || !size.h) return;
-    setView((v) => {
-      const px = v.x + a.x * image.width * v.scale,
-        py = v.y + a.y * image.height * v.scale;
-      // Sheets cover the lower part of the screen: move the mark to the top third.
-      return py > size.h * 0.3
-        ? { ...v, x: v.x + (size.w / 2 - px), y: v.y + (size.h * 0.22 - py) }
-        : v;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusId]);
   const zoomAt = (factor: number, px = size.w / 2, py = size.h / 2) =>
     setView((v) => {
       const scale = Math.min(
@@ -806,19 +811,9 @@ function Viewer({
     };
   };
   const toRel = (p: Point): Point =>
-    image
-      ? {
-          x: clamp01((p.x - view.x) / (image.width * view.scale)),
-          y: clamp01((p.y - view.y) / (image.height * view.scale)),
-        }
-      : { x: 0, y: 0 };
+    image ? toDrawing(p, view, image) : { x: 0, y: 0 };
   const toScreen = (x: number, y: number): Point =>
-    image
-      ? {
-          x: view.x + x * image.width * view.scale,
-          y: view.y + y * image.height * view.scale,
-        }
-      : { x: 0, y: 0 };
+    image ? toViewer(x, y, view, image) : { x: 0, y: 0 };
   const inside = (p: Point) =>
     !!image &&
     p.x >= view.x &&
@@ -845,6 +840,8 @@ function Viewer({
       };
       setDraft(undefined);
       setMoving(undefined);
+      g.stroke = undefined;
+      setInk(undefined);
       return;
     }
     const id = (e.target as Element)
@@ -854,6 +851,11 @@ function Viewer({
     g.start = p;
     g.view = view;
     g.moved = false;
+    if (mode === "highlight" && !readOnly && inside(p)) {
+      const r = toRel(p);
+      g.stroke = [[r.x, r.y]];
+      setInk(g.stroke);
+    }
   };
   const move = (e: React.PointerEvent) => {
     const g = gesture.current;
@@ -877,20 +879,32 @@ function Viewer({
       });
       return;
     }
+    if (g.stroke) {
+      // Freehand: add a point once the pointer has moved a couple of pixels.
+      const [lx, ly] = g.stroke.at(-1)!;
+      const last = toScreen(lx, ly);
+      if (Math.hypot(p.x - last.x, p.y - last.y) >= 2) {
+        const r = toRel(p);
+        g.stroke.push([r.x, r.y]);
+        setInk([...g.stroke]);
+      }
+      return;
+    }
     if (!g.start || !g.view) return;
     const dx = p.x - g.start.x,
       dy = p.y - g.start.y;
     if (!g.moved && Math.hypot(dx, dy) > TAP) g.moved = true;
     if (!g.moved) return;
-    if (g.target && mode === "navigate" && !readOnly) {
+    if (g.target?.kind === "region" && mode === "navigate" && !readOnly) {
       setMoving({
         id: g.target.id,
         dx: dx / (image!.width * view.scale),
         dy: dy / (image!.height * view.scale),
       });
-    } else if (mode === "navigate" || mode === "marker" || mode === "text") {
+    } else if (mode === "navigate" || mode === "erase") {
       setView({ ...g.view, x: g.view.x + dx, y: g.view.y + dy });
-    } else if (inside(g.start)) setDraft({ a: toRel(g.start), b: toRel(p) });
+    } else if (mode === "region" && inside(g.start))
+      setDraft({ a: toRel(g.start), b: toRel(p) });
   };
   const up = (e: React.PointerEvent) => {
     const g = gesture.current;
@@ -899,6 +913,7 @@ function Viewer({
     if (g.pinch) {
       if (g.pointers.size === 0) g.pinch = undefined;
       g.start = undefined;
+      g.stroke = undefined;
       return;
     }
     const start = g.start,
@@ -907,6 +922,21 @@ function Viewer({
     g.target = undefined;
     if (!start) return;
     const p = toLocal(e.clientX, e.clientY);
+    if (g.stroke) {
+      const points = g.stroke;
+      g.stroke = undefined;
+      g.moved = false;
+      setInk(undefined);
+      if (e.type === "pointercancel") return;
+      const r = toRel(p);
+      const [lx, ly] = points.at(-1)!;
+      if (r.x !== lx || r.y !== ly) points.push([r.x, r.y]);
+      // A tap leaves a dot: a stroke needs two points.
+      if (points.length === 1)
+        points.push([clamp01(points[0][0] + 0.001), points[0][1]]);
+      onStroke(points);
+      return;
+    }
     // The final result is computed from the pointer coordinates themselves, not
     // from preview state: browsers (notably Safari) can deliver pointerup before
     // React has rendered the last pointermove, so preview state may be stale.
@@ -914,7 +944,13 @@ function Viewer({
     g.moved = false;
     setMoving(undefined);
     setDraft(undefined);
-    if (moved && target && mode === "navigate" && !readOnly && image) {
+    if (
+      moved &&
+      target?.kind === "region" &&
+      mode === "navigate" &&
+      !readOnly &&
+      image
+    ) {
       const mx = (p.x - start.x) / (image.width * view.scale),
         my = (p.y - start.y) / (image.height * view.scale);
       onMove(target, {
@@ -929,23 +965,18 @@ function Viewer({
       });
       return;
     }
-    if (
-      moved &&
-      (mode === "rect" || mode === "circle" || mode === "arrow") &&
-      inside(start)
-    ) {
+    if (moved && mode === "region" && inside(start) && !readOnly) {
       const a = toRel(start),
         b = toRel(p);
-      if (Math.hypot(a.x - b.x, a.y - b.y) > 0.01) onShape(mode, a, b);
+      // Ignore accidental slivers; a region needs some width and height.
+      if (Math.abs(a.x - b.x) > 0.005 && Math.abs(a.y - b.y) > 0.005)
+        onRegion(a, b);
       return;
     }
     if (moved) return;
-    if (target) return onSelect(target.id);
-    if (!inside(p)) return;
-    if (readOnly) return onSelect("");
-    if (mode === "marker") onPlace(toRel(p));
-    else if (mode === "text") onText(toRel(p));
-    else onSelect("");
+    if (mode === "erase" && target?.kind === "highlight" && !readOnly)
+      return onErase(target);
+    onSelect(target ? target.id : "");
   };
   const key = (e: React.KeyboardEvent) => {
     const step = 60;
@@ -958,12 +989,16 @@ function Viewer({
       ArrowRight: () => setView((v) => ({ ...v, x: v.x - step })),
       ArrowUp: () => setView((v) => ({ ...v, y: v.y + step })),
       ArrowDown: () => setView((v) => ({ ...v, y: v.y - step })),
-      // Keyboard placement: the mark goes at the centre of the current view.
+      // Keyboard placement: a region around the centre of the current view.
       Enter: () => {
-        if (readOnly) return;
-        const centre = toRel({ x: size.w / 2, y: size.h / 2 });
-        if (mode === "marker") onPlace(centre);
-        else if (mode === "text") onText(centre);
+        if (readOnly || mode !== "region" || !image) return;
+        const c = toRel({ x: size.w / 2, y: size.h / 2 }),
+          dx = (size.w * 0.12) / (image.width * view.scale),
+          dy = (size.h * 0.12) / (image.height * view.scale);
+        onRegion(
+          { x: clamp01(c.x - dx), y: clamp01(c.y - dy) },
+          { x: clamp01(c.x + dx), y: clamp01(c.y + dy) },
+        );
       },
     };
     if (e.target !== box.current || !actions[e.key]) return;
@@ -989,7 +1024,7 @@ function Viewer({
         tabIndex={0}
         role="application"
         aria-roledescription="drawing viewer"
-        aria-label={`${drawing.title || drawing.name}, page ${page} of ${drawing.pageCount}. ${modeHint} Keyboard: arrows pan, plus and minus zoom, 0 fits${mode === "marker" ? ", Enter places a mark at the centre" : ""}.`}
+        aria-label={`${drawing.title || drawing.name}, page ${page} of ${drawing.pageCount}. ${modeHint} Keyboard: arrows pan, plus and minus zoom, 0 fits${mode === "region" ? ", Enter places a region at the centre" : ""}.`}
         onPointerDown={down}
         onPointerMove={move}
         onPointerUp={up}
@@ -1018,120 +1053,87 @@ function Viewer({
             height={size.h}
             aria-hidden="false"
           >
-            {annotations
-              .filter((a) => a.kind !== "marker")
-              .map((raw) => {
-                const a = position(raw);
-                const p1 = toScreen(a.x, a.y),
-                  p2 = toScreen(a.x2 ?? a.x, a.y2 ?? a.y);
-                const sel = a.id === selectedId;
-                const common = {
-                  "data-annotation-id": a.id,
-                  className: `plan-shape ${sel ? "selected" : ""}`,
-                };
-                if (a.kind === "text") {
-                  const w = Math.min(240, (a.text?.length || 1) * 7.5 + 14);
-                  return (
-                    <g
-                      key={a.id}
-                      {...common}
-                      role="button"
-                      aria-label={`Text note: ${a.text}`}
-                    >
-                      <rect
-                        x={p1.x}
-                        y={p1.y - 13}
-                        width={w}
-                        height={26}
-                        rx={4}
-                        className="plan-note-box"
-                      />
-                      <text
-                        x={p1.x + 7}
-                        y={p1.y + 5}
-                        className="plan-note-text"
-                      >
-                        {a.text}
-                      </text>
-                    </g>
-                  );
-                }
-                const shape =
-                  a.kind === "rect" ? (
-                    <rect
-                      x={Math.min(p1.x, p2.x)}
-                      y={Math.min(p1.y, p2.y)}
-                      width={Math.abs(p2.x - p1.x)}
-                      height={Math.abs(p2.y - p1.y)}
-                    />
-                  ) : a.kind === "circle" ? (
-                    <ellipse
-                      cx={(p1.x + p2.x) / 2}
-                      cy={(p1.y + p2.y) / 2}
-                      rx={Math.abs(p2.x - p1.x) / 2}
-                      ry={Math.abs(p2.y - p1.y) / 2}
-                    />
-                  ) : (
-                    <>
-                      <line x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y} />
-                      <ArrowHead from={p1} to={p2} />
-                    </>
-                  );
+            {annotations.map((raw) => {
+              if (raw.kind === "highlight") {
+                const pts = raw
+                  .points!.map(([u, v]) => {
+                    const q = toScreen(u, v);
+                    return `${q.x},${q.y}`;
+                  })
+                  .join(" ");
+                const sw = highlightWidth(raw) * image.width * view.scale;
                 return (
                   <g
-                    key={a.id}
-                    {...common}
-                    role="button"
-                    aria-label={
-                      a.kind === "rect"
-                        ? "Rectangle"
-                        : a.kind === "circle"
-                          ? "Circle"
-                          : "Arrow"
-                    }
+                    key={raw.id}
+                    data-annotation-id={raw.id}
+                    className={`plan-highlight ${mode === "erase" && !readOnly ? "erasable" : ""}`}
+                    role="img"
+                    aria-label="Highlighter stroke"
                   >
-                    <g className="halo">{shape}</g>
-                    <g className="stroke">{shape}</g>
-                    <g className="hit">{shape}</g>
+                    <polyline
+                      points={pts}
+                      stroke={rgb(highlightColor(raw))}
+                      strokeOpacity={highlightOpacity(raw)}
+                      strokeWidth={sw}
+                    />
+                    <polyline
+                      className="hit"
+                      points={pts}
+                      strokeWidth={Math.max(sw, 22)}
+                    />
                   </g>
                 );
-              })}
+              }
+              const a = position(raw);
+              const p1 = toScreen(a.x, a.y),
+                p2 = toScreen(a.x2 ?? a.x, a.y2 ?? a.y);
+              const shape = (
+                <rect
+                  x={Math.min(p1.x, p2.x)}
+                  y={Math.min(p1.y, p2.y)}
+                  width={Math.abs(p2.x - p1.x)}
+                  height={Math.abs(p2.y - p1.y)}
+                />
+              );
+              return (
+                <g
+                  key={a.id}
+                  data-annotation-id={a.id}
+                  className={`plan-shape plan-region ${a.id === selectedId ? "selected" : ""}`}
+                  role="img"
+                  aria-label="Location region of the inspected element"
+                >
+                  <g className="fill">{shape}</g>
+                  <g className="halo">{shape}</g>
+                  <g className="stroke">{shape}</g>
+                  <g className="hit">{shape}</g>
+                </g>
+              );
+            })}
+            {ink && (
+              <polyline
+                className="plan-highlight draft"
+                points={ink
+                  .map(([u, v]) => {
+                    const q = toScreen(u, v);
+                    return `${q.x},${q.y}`;
+                  })
+                  .join(" ")}
+                stroke={rgb(pen.color)}
+                strokeOpacity={pen.opacity}
+                strokeWidth={
+                  HIGHLIGHT_WIDTHS[pen.size] * image.width * view.scale
+                }
+              />
+            )}
             {draft && (
               <DraftShape
-                mode={mode}
                 a={toScreen(draft.a.x, draft.a.y)}
                 b={toScreen(draft.b.x, draft.b.y)}
               />
             )}
           </svg>
         )}
-        {image &&
-          annotations
-            .filter((a) => a.kind === "marker")
-            .map((raw) => {
-              const a = position(raw);
-              const p = toScreen(a.x, a.y);
-              const l = labels.get(a.id);
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  data-annotation-id={a.id}
-                  className={`plan-marker ${a.id === selectedId ? "selected" : ""} ${l?.linked ? "" : "unlinked"}`}
-                  style={{ left: p.x, top: p.y }}
-                  aria-label={`Mark ${l?.label}: ${l?.linked ? `item ${l.itemIndex + 1}, ${l.description}` : "linked item no longer exists"}`}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onSelect(a.id);
-                    }
-                  }}
-                >
-                  <span>{l?.label}</span>
-                </button>
-              );
-            })}
       </div>
       <div className="plans-viewbar">
         <span className="plans-hint" aria-live="polite">
@@ -1181,303 +1183,17 @@ function Viewer({
     </div>
   );
 }
-function ArrowHead({ from, to }: { from: Point; to: Point }) {
-  const angle = Math.atan2(to.y - from.y, to.x - from.x),
-    size = 12;
-  const p = (a: number) =>
-    `${to.x - size * Math.cos(angle + a)},${to.y - size * Math.sin(angle + a)}`;
-  return <polyline points={`${p(0.45)} ${to.x},${to.y} ${p(-0.45)}`} />;
-}
-function DraftShape({ mode, a, b }: { mode: Mode; a: Point; b: Point }) {
+function DraftShape({ a, b }: { a: Point; b: Point }) {
   return (
-    <g className="plan-shape draft">
+    <g className="plan-shape plan-region draft">
       <g className="stroke">
-        {mode === "rect" ? (
-          <rect
-            x={Math.min(a.x, b.x)}
-            y={Math.min(a.y, b.y)}
-            width={Math.abs(b.x - a.x)}
-            height={Math.abs(b.y - a.y)}
-          />
-        ) : mode === "circle" ? (
-          <ellipse
-            cx={(a.x + b.x) / 2}
-            cy={(a.y + b.y) / 2}
-            rx={Math.abs(b.x - a.x) / 2}
-            ry={Math.abs(b.y - a.y) / 2}
-          />
-        ) : (
-          <>
-            <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
-            <ArrowHead from={a} to={b} />
-          </>
-        )}
+        <rect
+          x={Math.min(a.x, b.x)}
+          y={Math.min(a.y, b.y)}
+          width={Math.abs(b.x - a.x)}
+          height={Math.abs(b.y - a.y)}
+        />
       </g>
     </g>
-  );
-}
-
-function Legend({
-  rows,
-  drawings,
-  onSelect,
-}: {
-  rows: ReturnType<typeof legendRows>;
-  drawings: Drawing[];
-  onSelect: (row: ReturnType<typeof legendRows>[number]) => void;
-}) {
-  if (!rows.length)
-    return (
-      <p className="muted small">
-        No marks yet. Choose an item, then Place mark.
-      </p>
-    );
-  return (
-    <>
-      <h2 className="plans-panel-title">Legend</h2>
-      <table className="plans-legend">
-        <thead>
-          <tr>
-            <th scope="col">Mark</th>
-            <th scope="col">Checklist item</th>
-            <th scope="col">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const d = drawings.findIndex((x) => x.id === row.drawingId);
-            return (
-              <tr
-                key={row.annotationId}
-                className={row.linked ? "" : "unlinked"}
-              >
-                <td>
-                  <button
-                    type="button"
-                    className="legend-mark"
-                    onClick={() => onSelect(row)}
-                    aria-label={`Show mark ${row.label} on drawing ${d + 1}, page ${row.page}`}
-                  >
-                    {row.label}
-                  </button>
-                </td>
-                <td>
-                  {row.item}
-                  <small>
-                    Drawing {d + 1}, page {row.page}
-                  </small>
-                </td>
-                <td>
-                  <strong>{row.status}</strong>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </>
-  );
-}
-
-function MarkDetails({
-  annotation,
-  record,
-  photos,
-  label,
-  readOnly,
-  run,
-  onOpenItem,
-  onDelete,
-}: {
-  annotation: Annotation;
-  record: Inspection;
-  photos: PhotoView[];
-  label?: string;
-  readOnly: boolean;
-  run: (work: () => Promise<unknown>, success?: string) => Promise<void>;
-  onOpenItem: (itemId: string) => void;
-  onDelete: () => void;
-}) {
-  const camera = useRef<HTMLInputElement>(null);
-  const [adding, setAdding] = useState(false);
-  if (annotation.kind !== "marker")
-    return (
-      <div className="plans-details">
-        <p>
-          <strong>
-            {annotation.kind === "text"
-              ? "Text note"
-              : annotation.kind === "rect"
-                ? "Rectangle"
-                : annotation.kind === "circle"
-                  ? "Circle"
-                  : "Arrow"}
-          </strong>
-          {annotation.text ? `: ${annotation.text}` : ""}
-        </p>
-        <p className="small muted">
-          Supporting annotation; not linked to a checklist item.
-        </p>
-        {!readOnly && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-danger"
-            onClick={onDelete}
-          >
-            <Trash2 size={16} />
-            Delete annotation
-          </Button>
-        )}
-      </div>
-    );
-  const items = record.template.items;
-  const index = items.findIndex((i) => i.id === annotation.itemId);
-  const item = items[index];
-  const response = item ? record.responses[item.id] : undefined;
-  const sorted = orderedPhotos(photos);
-  const atMark = sorted.filter((p) => p.markId === annotation.id);
-  const forItem = sorted.filter(
-    (p) => item && p.itemId === item.id && p.markId !== annotation.id,
-  );
-  const add = async (list: FileList | null) => {
-    if (!list?.length || !item) return;
-    const files = Array.from(list);
-    setAdding(true);
-    try {
-      await run(async () => {
-        const prepared: Photo[] = [];
-        for (const [i, file] of files.entries())
-          prepared.push({
-            ...(await preparePhoto(file, record.id, item.id, i)),
-            markId: annotation.id,
-          });
-        const stored = await Promise.all(prepared.map(toStoredPhoto));
-        await editPlans(record.id, async () => {
-          const existing = await db.photos
-            .where("inspectionId")
-            .equals(record.id)
-            .toArray();
-          if (existing.length + stored.length > MAX_PHOTOS)
-            throw new Error(
-              `A maximum of ${MAX_PHOTOS} photographs is supported per inspection.`,
-            );
-          if (!(await db.annotations.get(annotation.id)))
-            throw new Error(
-              "This mark was deleted before the photo was saved.",
-            );
-          const order = Math.max(-1, ...existing.map((p) => p.order)) + 1;
-          await db.photos.bulkAdd(
-            stored.map((p, i) => ({ ...p, order: order + i })),
-          );
-        });
-      }, `Photograph saved for mark ${label}.`);
-    } finally {
-      setAdding(false);
-      if (camera.current) camera.current.value = "";
-    }
-  };
-  return (
-    <div className="plans-details">
-      <h2 className="plans-panel-title">
-        <span className="plan-marker static" aria-hidden="true">
-          <span>{label}</span>
-        </span>
-        {item
-          ? `Item ${index + 1}: ${item.description}`
-          : "Linked checklist item no longer exists"}
-      </h2>
-      {item ? (
-        <dl className="plans-facts">
-          <dt>Status</dt>
-          <dd>
-            <strong>{statusText(response?.status)}</strong>
-          </dd>
-          <dt>Remarks</dt>
-          <dd>{response?.remarks || "No remarks recorded."}</dd>
-        </dl>
-      ) : (
-        <p className="notice warning small">
-          This mark is not attached to any item. Choose the correct item below
-          or delete the mark. It is never moved to another item automatically.
-        </p>
-      )}
-      {!readOnly && (
-        <Field label="Linked checklist item">
-          <select
-            value={item ? item.id : ""}
-            onChange={(e) =>
-              void run(() =>
-                updateAnnotation(annotation, { itemId: e.target.value }),
-              )
-            }
-          >
-            {!item && (
-              <option value="" disabled>
-                Choose an item…
-              </option>
-            )}
-            {items.map((it, i) => (
-              <option key={it.id} value={it.id}>
-                {i + 1}. {it.description}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
-      <div className="plans-photos">
-        <strong className="small">
-          Photographs ({atMark.length} at this mark
-          {forItem.length ? `, ${forItem.length} more for the item` : ""})
-        </strong>
-        <div className="plans-photo-strip">
-          {[...atMark, ...forItem].map((p) => (
-            <figure
-              key={p.id}
-              className={p.markId === annotation.id ? "at-mark" : ""}
-            >
-              <PhotoImage photo={p} />
-              <figcaption>
-                {photoNumber(sorted.indexOf(p))}
-                {p.markId === annotation.id ? ` · ${label}` : ""}
-              </figcaption>
-            </figure>
-          ))}
-        </div>
-      </div>
-      <input
-        ref={camera}
-        hidden
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        capture="environment"
-        multiple
-        aria-label={`Add photographs for mark ${label}`}
-        onChange={(e) => void add(e.target.files)}
-      />
-      <div className="row wrap plans-actions">
-        {item && (
-          <Button variant="outline" onClick={() => onOpenItem(item.id)}>
-            Open item
-          </Button>
-        )}
-        {item && !readOnly && (
-          <Button
-            className="btn-accent"
-            disabled={adding}
-            onClick={() => camera.current?.click()}
-          >
-            <Camera size={17} />
-            {adding ? "Saving…" : "Add photo"}
-          </Button>
-        )}
-        {!readOnly && (
-          <Button variant="ghost" className="text-danger" onClick={onDelete}>
-            <Trash2 size={16} />
-            Delete mark
-          </Button>
-        )}
-      </div>
-    </div>
   );
 }

@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import { Check, Download, FileText, Plus, RotateCcw } from "lucide-react";
 import {
-  displayNo,
+  displayDate,
   progress,
   type Inspection,
   type PhotoView,
   type Response,
 } from "../domain";
 import { Button, Dialog, Field, StatusBadge } from "./ui";
-import { EnvironmentPanel } from "./EnvironmentPanel";
 import { ItemPhotos } from "./ItemPhotos";
 
 export function Checklist({
@@ -16,7 +15,6 @@ export function Checklist({
   photos,
   onChange,
   onPhotos,
-  onComplete,
   onDetails,
   onReopen,
   onPreview,
@@ -27,7 +25,6 @@ export function Checklist({
   photos: PhotoView[];
   onChange: (r: Inspection) => void;
   onPhotos: (item: string) => void;
-  onComplete: () => void;
   onDetails: () => void;
   onReopen: () => void;
   onPreview: () => void;
@@ -62,6 +59,18 @@ export function Checklist({
           </div>
           <StatusBadge status={record.status} />
         </div>
+        {readOnly && (
+          // Inspections completed before sign-off was removed stay read-only
+          // until reopened; the reopened copy is a new revision.
+          <div className="notice reopen-notice" role="status">
+            <span>
+              This inspection is {record.status.toLowerCase()} and read-only.
+            </span>
+            <Button variant="outline" size="sm" onClick={onReopen}>
+              Reopen to edit
+            </Button>
+          </div>
+        )}
         {record.fictional && (
           <div className="notice">
             Fictional demonstration record. No project approval is represented.
@@ -145,7 +154,6 @@ export function Checklist({
             </Field>
           </div>
         </section>
-        <EnvironmentPanel key={record.id} record={record} onChange={onChange} />
         <section
           id="inspection-checklist"
           className="inspection-section"
@@ -200,6 +208,35 @@ export function Checklist({
                         ),
                       )}
                     </div>
+                    <button
+                      type="button"
+                      className="clear-status"
+                      disabled={readOnly || r.status === "Not Inspected"}
+                      onClick={() =>
+                        change(item.id, { status: "Not Inspected" })
+                      }
+                    >
+                      <RotateCcw size={13} />
+                      {r.status === "Not Inspected"
+                        ? "Not inspected"
+                        : "Clear status"}
+                    </button>
+                  </div>
+                  <div className="item-date-cell">
+                    <Field
+                      label="Inspection date"
+                      hint={r.date ? displayDate(r.date) : "Not recorded"}
+                    >
+                      <input
+                        type="date"
+                        value={r.date || ""}
+                        disabled={readOnly}
+                        aria-label={`Inspection date, item ${index + 1}`}
+                        onChange={(e) =>
+                          change(item.id, { date: e.target.value })
+                        }
+                      />
+                    </Field>
                   </div>
                   <div className="item-remarks-cell">
                     <Field
@@ -210,7 +247,7 @@ export function Checklist({
                       }
                       error={
                         r.status === "Fail" && !r.remarks.trim()
-                          ? "Add a remark before completing this inspection."
+                          ? "Add a remark describing the failure."
                           : undefined
                       }
                     >
@@ -232,87 +269,6 @@ export function Checklist({
                     run={run}
                     onManage={() => onPhotos(item.id)}
                   />
-                  <details className="item-extra">
-                    <summary>Measurements & reference</summary>
-                    <div className="item-extra-body">
-                      <button
-                        type="button"
-                        className="clear-status"
-                        disabled={readOnly || r.status === "Not Inspected"}
-                        onClick={() =>
-                          change(item.id, { status: "Not Inspected" })
-                        }
-                      >
-                        <RotateCcw size={13} />
-                        {r.status === "Not Inspected"
-                          ? "Not inspected"
-                          : "Clear status"}
-                      </button>
-                      {item.hint && <p className="muted">{item.hint}</p>}
-                      {item.criteria && (
-                        <div className="notice">
-                          <strong>Configured project criteria</strong>
-                          <p>{item.criteria.text}</p>
-                          <p>Document: {item.criteria.documentReference}</p>
-                          <p>
-                            Verify the document’s approval and select the status
-                            manually.
-                          </p>
-                        </div>
-                      )}
-                      {!!item.fields.length && (
-                        <div className="form-grid">
-                          {item.fields.map((f) => (
-                            <Field key={f.key} label={f.label}>
-                              <div className={f.unit ? "unit-input" : ""}>
-                                <input
-                                  disabled={readOnly}
-                                  value={r.values[f.key] || ""}
-                                  placeholder="[Recorded value]"
-                                  onChange={(e) =>
-                                    change(item.id, {
-                                      values: {
-                                        ...r.values,
-                                        [f.key]: e.target.value,
-                                      },
-                                    })
-                                  }
-                                />
-                                {f.unit && (
-                                  <input
-                                    aria-label={`${f.label} units`}
-                                    disabled={readOnly}
-                                    value={r.values[f.key + "Unit"] || ""}
-                                    placeholder="[Units]"
-                                    onChange={(e) =>
-                                      change(item.id, {
-                                        values: {
-                                          ...r.values,
-                                          [f.key + "Unit"]: e.target.value,
-                                        },
-                                      })
-                                    }
-                                  />
-                                )}
-                              </div>
-                            </Field>
-                          ))}
-                        </div>
-                      )}
-                      <Field label="Drawing / specification reference">
-                        <input
-                          disabled={readOnly}
-                          value={r.reference}
-                          placeholder={
-                            record.drawing || "[Document number and revision]"
-                          }
-                          onChange={(e) =>
-                            change(item.id, { reference: e.target.value })
-                          }
-                        />
-                      </Field>
-                    </div>
-                  </details>
                 </section>
               );
             })}
@@ -326,32 +282,6 @@ export function Checklist({
               <Plus size={18} />
               Add inspection item
             </Button>
-          )}
-        </section>
-        <section
-          id="sign-off"
-          className="card signoff-card"
-          aria-labelledby="signoff-title"
-        >
-          <div>
-            <h2 id="signoff-title" className="section-label">
-              Sign-off
-            </h2>
-            <p>
-              {displayNo(record)} · {p.done} of {p.total} items recorded ·
-              Revision {record.revision}
-            </p>
-            <p className="muted small">
-              Completion records your observations and does not represent formal
-              approval.
-            </p>
-          </div>
-          {readOnly ? (
-            <Button variant="outline" onClick={onReopen}>
-              Reopen as revision {record.revision + 1}
-            </Button>
-          ) : (
-            <Button onClick={onComplete}>Complete inspection</Button>
           )}
         </section>
       </div>

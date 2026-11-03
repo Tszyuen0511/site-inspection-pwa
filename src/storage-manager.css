@@ -1,0 +1,145 @@
+/* Storage Manager page. Uses the shared Cobalt tokens only (light and dark). */
+.storage-manager {
+  max-width: 960px;
+}
+.storage-manager > #storage-updated {
+  margin: -8px 0 16px;
+  min-height: 1.5em;
+}
+.storage-manager .settings-section {
+  margin-bottom: 20px;
+}
+.storage-manager .progress-label {
+  margin-top: 0;
+}
+.storage-meter.warning > div {
+  background: var(--warning);
+}
+.storage-meter.critical > div {
+  background: var(--danger);
+}
+.storage-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 20px 0 0;
+}
+.storage-metrics > div {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-secondary);
+}
+.storage-metrics dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.storage-metrics dd {
+  margin: 4px 0 0;
+  color: var(--strong);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.storage-metrics dd small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.storage-sort {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.storage-sort select {
+  min-height: 36px;
+}
+.storage-table-wrap {
+  overflow-x: auto;
+}
+.storage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.storage-table th,
+.storage-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  white-space: nowrap;
+}
+.storage-table th:first-child {
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.storage-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.storage-table tbody th {
+  font-weight: 500;
+  color: var(--text);
+}
+.storage-table tfoot th,
+.storage-table tfoot td {
+  border-bottom: 0;
+  font-weight: 600;
+  color: var(--strong);
+}
+.storage-health {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.storage-health li {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--blue);
+  border-radius: 6px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 13px;
+}
+.storage-health li.warning {
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-color: var(--warning);
+}
+.storage-health li.critical {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: var(--danger);
+}
+.storage-health li svg {
+  flex: none;
+  margin-top: 2px;
+}
+.storage-health p {
+  margin: 2px 0 0;
+}
+.storage-ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--success);
+}
+@media (max-width: 640px) {
+  .storage-manager .card-header {
+    flex-wrap: wrap;
+  }
+  .storage-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .storage-table th,
+  .storage-table td {
+    padding: 8px 4px;
+  }
+}

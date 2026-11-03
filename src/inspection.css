@@ -334,8 +334,14 @@ textarea::placeholder {
 .item-status-cell {
   min-width: 0;
 }
-.item-remarks-cell .field {
+.item-remarks-cell .field,
+.item-date-cell .field {
   margin-bottom: 0;
+}
+.item-date-cell input {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
 }
 .item-remarks-cell textarea {
   min-height: 48px;
@@ -450,37 +456,6 @@ textarea::placeholder {
 .inline-caption .btn {
   margin-bottom: 2px;
 }
-.item-extra {
-  border-top: 1px solid var(--line);
-  min-width: 0;
-}
-.item-extra summary {
-  min-height: 44px;
-  padding-top: 12px;
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
-}
-.item-extra summary:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
-}
-.item-extra-body {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding-top: 12px;
-}
-.item-extra-body .clear-status {
-  margin: 0;
-  align-self: start;
-}
-.item-extra-body > .field {
-  margin: 0;
-}
-.item-extra-body > p {
-  font-size: 14px;
-}
 .add-inspection-item {
   width: 100%;
   margin-top: 16px;
@@ -488,22 +463,6 @@ textarea::placeholder {
   border: 2px dashed var(--control-border);
   background: transparent;
   color: var(--text);
-}
-.signoff-card {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px;
-  scroll-margin-top: 96px;
-}
-.signoff-card p {
-  margin-top: 8px;
-  font-size: 14px;
-}
-.signoff-card .btn {
-  flex-shrink: 0;
 }
 .report-dock {
   position: sticky;
@@ -620,8 +579,8 @@ textarea::placeholder {
   }
   .checklist-item {
     grid-template-columns:
-      minmax(88px, 0.9fr) minmax(148px, 1fr) minmax(95px, 0.9fr)
-      minmax(80px, 0.9fr);
+      minmax(88px, 0.9fr) minmax(148px, 1fr) minmax(132px, 0.7fr)
+      minmax(95px, 0.9fr) minmax(80px, 0.9fr);
     gap: 12px;
     align-items: start;
   }
@@ -649,9 +608,6 @@ textarea::placeholder {
     height: 72px;
     font-size: 16px;
   }
-  .item-extra {
-    grid-column: 1 / -1;
-  }
   .inline-caption {
     grid-column: 2 / -1;
     grid-row: 2;
@@ -665,7 +621,7 @@ textarea::placeholder {
     display: contents;
   }
   .item-photo-row {
-    grid-column: 4;
+    grid-column: 5;
     grid-row: 1;
   }
   .inline-photo-tools {
@@ -794,9 +750,6 @@ textarea::placeholder {
   }
   .desktop-label {
     display: none;
-  }
-  .signoff-card {
-    padding: 16px;
   }
   .checklist-screen .toast {
     bottom: calc(96px + env(safe-area-inset-bottom));
@@ -960,10 +913,10 @@ textarea::placeholder {
     flex: 1 1 140px;
   }
 }
-
-.environment-card {
-  padding: 16px;
-}
-.environment-card .field {
-  margin: 0;
+.reopen-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
 }
