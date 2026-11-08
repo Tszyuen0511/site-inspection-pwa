@@ -1,16 +1,22 @@
 import { useState, type ReactNode } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
   Archive,
   ArrowRight,
+  CheckSquare,
   ClipboardList,
   Copy,
   FileText,
+  ListChecks,
   Plus,
   Search,
+  Share2,
+  Square,
   Trash2,
   X,
 } from "lucide-react";
 import { displayNo, type Inspection, type Project } from "../domain";
+import { readiness, readinessFacts } from "../readiness";
 import { Button, StatusBadge } from "./ui";
 export function Records({
   banner,
@@ -23,6 +29,7 @@ export function Records({
   onExport,
   onRepeat,
   onDelete,
+  onExportSelected,
 }: {
   banner?: ReactNode;
   records: Inspection[];
@@ -34,12 +41,25 @@ export function Records({
   onExport: (r: Inspection) => void;
   onRepeat: (r: Inspection) => void;
   onDelete: (r: Inspection) => void;
+  onExportSelected: (records: Inspection[]) => void;
 }) {
   const [search, setSearch] = useState(""),
     [status, setStatus] = useState(initialFilter),
     [project, setProject] = useState(""),
     [type, setType] = useState(""),
-    [date, setDate] = useState("");
+    [date, setDate] = useState(""),
+    [selecting, setSelecting] = useState(false),
+    [selected, setSelected] = useState<Set<string>>(new Set());
+  // Photo/drawing counts and plan markings, from index keys only (no bytes).
+  const facts = useLiveQuery(readinessFacts, [], new Map());
+  const check = (r: Inspection) => readiness(r, facts.get(r.id));
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const filtered = records
     .filter(
       (r) =>
@@ -78,10 +98,23 @@ export function Records({
           </h1>
           <p>Find, resume and export your site records.</p>
         </div>
-        <Button onClick={onNew}>
-          <Plus size={18} />
-          New inspection
-        </Button>
+        <div className="row wrap">
+          <Button
+            variant="outline"
+            aria-pressed={selecting}
+            onClick={() => {
+              setSelecting(!selecting);
+              setSelected(new Set());
+            }}
+          >
+            {selecting ? <X size={18} /> : <ListChecks size={18} />}
+            {selecting ? "Cancel selection" : "Select to export"}
+          </Button>
+          <Button onClick={onNew}>
+            <Plus size={18} />
+            New inspection
+          </Button>
+        </div>
       </div>
       {banner}
       <div className="card records-card">
@@ -157,75 +190,138 @@ export function Records({
           {filtered.length === 1 ? "inspection" : "inspections"}{" "}
           <span>· Fictional sample records are labelled in their details.</span>
         </div>
+        {selecting && (
+          <div
+            className="records-selection"
+            role="toolbar"
+            aria-label="Export selection"
+          >
+            <span role="status">{selected.size} selected</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setSelected(
+                  new Set(
+                    filtered.filter((r) => check(r).ready).map((r) => r.id),
+                  ),
+                )
+              }
+            >
+              Select all ready
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!selected.size}
+              onClick={() => setSelected(new Set())}
+            >
+              Clear
+            </Button>
+            <Button
+              size="sm"
+              disabled={!selected.size}
+              onClick={() =>
+                onExportSelected(records.filter((r) => selected.has(r.id)))
+              }
+            >
+              <Share2 size={16} />
+              Export {selected.size || ""}
+            </Button>
+          </div>
+        )}
         <div className="records-list">
-          {filtered.map((r) => (
-            <article className="record-list-row" key={r.id}>
-              <button className="record-main" onClick={() => onOpen(r)}>
-                <span className="record-icon blue">
-                  <ClipboardList size={22} />
-                </span>
-                <span>
-                  <strong>
-                    {r.element} <span className="record-type">{r.type}</span>
-                  </strong>
-                  <small>{r.projectName}</small>
-                  <small className="mono record-id">{displayNo(r)}</small>
-                </span>
-              </button>
-              <div className="record-metadata">
-                <span>{formatDate(r.date)}</span>
-                <small>{r.inspector}</small>
-              </div>
-              <StatusBadge status={r.status} />
-              <div className="row record-actions">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Preview ${r.element} PDF`}
-                  title="Preview PDF"
-                  onClick={() => onReport(r)}
+          {filtered.map((r) => {
+            const ready = check(r);
+            const isSelected = selected.has(r.id);
+            return (
+              <article
+                className={`record-list-row ${isSelected ? "selected" : ""}`}
+                key={r.id}
+              >
+                <button
+                  className="record-main"
+                  aria-pressed={selecting ? isSelected : undefined}
+                  aria-label={selecting ? `Select ${r.element}` : undefined}
+                  onClick={() => (selecting ? toggle(r.id) : onOpen(r))}
                 >
-                  <FileText size={17} />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Export ${r.element} ZIP`}
-                  title="Export ZIP"
-                  onClick={() => onExport(r)}
-                >
-                  <Archive size={17} />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Repeat ${r.element}`}
-                  title="Repeat inspection with blank results"
-                  onClick={() => onRepeat(r)}
-                >
-                  <Copy size={17} />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Delete ${r.element}`}
-                  title="Delete inspection"
-                  className="text-danger"
-                  onClick={() => onDelete(r)}
-                >
-                  <Trash2 size={17} />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  aria-label={`Open ${r.element}`}
-                  onClick={() => onOpen(r)}
-                >
-                  <ArrowRight size={17} />
-                </Button>
-              </div>
-            </article>
-          ))}
+                  <span className="record-icon blue">
+                    {!selecting ? (
+                      <ClipboardList size={22} />
+                    ) : isSelected ? (
+                      <CheckSquare size={22} />
+                    ) : (
+                      <Square size={22} />
+                    )}
+                  </span>
+                  <span>
+                    <strong>
+                      {r.element} <span className="record-type">{r.type}</span>
+                    </strong>
+                    <small>{r.projectName}</small>
+                    <small className="mono record-id">{displayNo(r)}</small>
+                  </span>
+                </button>
+                <div className="record-metadata">
+                  <span>{formatDate(r.date)}</span>
+                  <small>{r.inspector}</small>
+                  <span
+                    className={`readiness ${ready.ready ? "is-ready" : "is-todo"}`}
+                  >
+                    {ready.ready ? "Ready to export" : ready.issues.join(" · ")}
+                  </span>
+                </div>
+                <StatusBadge status={r.status} />
+                <div className="row record-actions">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Preview ${r.element} PDF`}
+                    title="Preview PDF"
+                    onClick={() => onReport(r)}
+                  >
+                    <FileText size={17} />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Export ${r.element} ZIP`}
+                    title="Export ZIP"
+                    onClick={() => onExport(r)}
+                  >
+                    <Archive size={17} />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Repeat ${r.element}`}
+                    title="Repeat inspection with blank results"
+                    onClick={() => onRepeat(r)}
+                  >
+                    <Copy size={17} />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Delete ${r.element}`}
+                    title="Delete inspection"
+                    className="text-danger"
+                    onClick={() => onDelete(r)}
+                  >
+                    <Trash2 size={17} />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`Open ${r.element}`}
+                    onClick={() => onOpen(r)}
+                  >
+                    <ArrowRight size={17} />
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
         </div>
         {!filtered.length && (
           <div className="empty-state">

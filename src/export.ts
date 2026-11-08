@@ -90,9 +90,11 @@ export async function generatePackage(
   font?: string,
   plans?: ReportPlans,
   originals: { drawing: Drawing; bytes: ArrayBuffer }[] = [],
+  /** A report already generated for this record, to avoid rendering it twice. */
+  prebuiltPdf?: Blob,
 ) {
   verifyPhotos(record, photos, true);
-  const pdf = await generatePDF(record, photos, font, plans);
+  const pdf = prebuiltPdf ?? (await generatePDF(record, photos, font, plans));
   const zip = new JSZip();
   const folder = zip.folder(packageName(record))!;
   folder.folder("Photos");

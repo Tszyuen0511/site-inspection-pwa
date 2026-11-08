@@ -132,8 +132,10 @@ test("one location region: place, replace, zoom, pan, move, reload, remove and p
   await openDraft(page);
   await openPlans(page);
   await expect(region(page)).toBeVisible();
-  const reloaded = await screenRel(page);
-  expect(Math.abs(reloaded.x - moved.x)).toBeLessThan(0.01);
+  // The viewer fits the drawing just after it appears; measure once settled.
+  await expect
+    .poll(async () => Math.abs((await screenRel(page)).x - moved.x))
+    .toBeLessThan(0.01);
   // The PDF report shows the plan with the region and no legend, offline.
   await page.context().setOffline(true);
   await editorTab(page, "Report");
@@ -341,6 +343,8 @@ test("highlight pen: mouse and touch strokes, settings, zoom, reload, undo, eras
   await page.getByRole("button", { name: "Navigate" }).click();
   await drag(page, [0.3, 0.4], [0.6, 0.45]);
   expect(await strokes(page)).toHaveLength(0);
+  // That drag panned the drawing; put it back so the strokes start on it.
+  await page.getByRole("button", { name: "Fit drawing to view" }).click();
   // Mouse stroke with chosen colour, width and opacity.
   await page.getByRole("button", { name: "Highlight Pen" }).click();
   const settings = page.getByRole("group", { name: "Highlighter settings" });

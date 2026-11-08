@@ -46,6 +46,7 @@ import {
 } from "./domain";
 import { Button, Dialog } from "./components/ui";
 import { Records } from "./components/Records";
+import { ExportSelected } from "./components/ExportSelected";
 import { Checklist } from "./components/Checklist";
 import { InspectionForm } from "./components/InspectionForm";
 import { PhotoManager } from "./components/PhotoManager";
@@ -84,6 +85,8 @@ type Page =
   | "report"
   | "settings"
   | "storage";
+const UNSAVED_NOTICE =
+  "Changes are not saved. Use Retry save before leaving this inspection.";
 interface InstallEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: string }>;
@@ -118,7 +121,8 @@ export default function App() {
     [integrityOpen, setIntegrityOpen] = useState(false),
     [conflict, setConflict] = useState(false),
     [pendingBackup, setPendingBackup] = useState<BackupOutcome["pending"]>(),
-    [exportConfirm, setExportConfirm] = useState<Inspection>();
+    [exportConfirm, setExportConfirm] = useState<Inspection>(),
+    [exporting, setExporting] = useState<Inspection[]>();
   const activeRef = useRef<Inspection | undefined>(undefined),
     queue = useRef<Promise<unknown>>(Promise.resolve()),
     unsaved = useRef(false),
@@ -266,15 +270,17 @@ export default function App() {
       await pending;
     } while (pending !== queue.current);
     if (unsaved.current || failedPhotos.current.length) {
-      setNotice({
-        message:
-          "Changes are not saved. Use Retry save before leaving this inspection.",
-        error: true,
-      });
+      setNotice({ message: UNSAVED_NOTICE, error: true });
       return false;
     }
     return true;
   };
+  // Once everything is saved again (e.g. after Retry save), the warning about
+  // unsaved changes is out of date and must not keep covering the screen.
+  useEffect(() => {
+    if (saveState === "Saved on device")
+      setNotice((n) => (n?.message === UNSAVED_NOTICE ? undefined : n));
+  }, [saveState]);
   const activate = (record: Inspection) => {
     activeRef.current = record;
     baseKey.current = inspectionContentKey(record);
@@ -936,6 +942,7 @@ export default function App() {
                   onReport={(r) => void open(r, "report")}
                   onExport={(r) => void exportZIP(r)}
                   onDelete={setDeleting}
+                  onExportSelected={setExporting}
                   onRepeat={(r) =>
                     void run(async () => {
                       if (!(await flush())) return;
@@ -1274,6 +1281,14 @@ export default function App() {
           )
         )}
       </Dialog>
+      {exporting && (
+        <ExportSelected
+          records={exporting}
+          onClose={() => setExporting(undefined)}
+          prepare={flush}
+          onMessage={(message, error = false) => setNotice({ message, error })}
+        />
+      )}
       <Dialog
         open={!!deleting}
         onOpenChange={(v) => !v && setDeleting(undefined)}

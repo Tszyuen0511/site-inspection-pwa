@@ -2672,3 +2672,62 @@ main {
     scroll-behavior: auto !important;
   }
 }
+/* Export readiness and multi-record export. */
+.record-metadata .readiness {
+  font-size: 12px;
+  font-weight: 600;
+}
+.readiness.is-ready {
+  color: var(--success);
+}
+.readiness.is-todo {
+  color: var(--warning);
+  font-weight: 500;
+}
+.record-list-row.selected {
+  background: var(--blue-soft);
+}
+.records-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-secondary);
+}
+.records-selection > span {
+  font-weight: 600;
+  margin-right: auto;
+}
+.export-list,
+.export-files {
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.export-list li,
+.export-files li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.export-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.export-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 16px;
+}
+@media (max-width: 760px) {
+  .records-selection {
+    padding: 12px 16px;
+  }
+}
